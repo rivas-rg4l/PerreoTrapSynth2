@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include <algorithm>
 #include "PluginEditor.h"
 
 //==============================================================================
@@ -510,6 +511,8 @@ PerreoTrapSynthAudioProcessor::PerreoTrapSynthAudioProcessor()
 
     jassert (getPresetTable().size() == (size_t) numPresets);
 
+    loadLibrariesFromDisk();
+
     synth.clearVoices();
     for (int i = 0; i < 10; ++i)
         synth.addVoice (new SynthVoice (synthParams));
@@ -715,6 +718,7 @@ void PerreoTrapSynthAudioProcessor::applyPreset (int index)
     index = juce::jlimit (0, numPresets - 1, index);
     currentPreset.store (index);
     customPresetName = juce::String();
+    customLibName    = juce::String();
 
     const auto& preset = getPresetTable()[(size_t) index];
 
@@ -776,33 +780,123 @@ void PerreoTrapSynthAudioProcessor::changeProgramName (int, const juce::String&)
 }
 
 //==============================================================================
-// Importar / exportar presets (.ptspreset = XML)
+// Librerias y packs (.ptspack = XML con varios presets)
 //==============================================================================
-bool PerreoTrapSynthAudioProcessor::exportPresetToFile (const juce::File& file, const juce::String& presetName)
+namespace
 {
-    juce::XmlElement xml ("PerreoTrapSynthPreset");
-    xml.setAttribute ("version", 2);
-    xml.setAttribute ("name", presetName);
+    constexpr int maxPresetsPerPack = 500;
 
-    for (auto* param : getParameters())
+    juce::File getLibrariesFolder()
     {
-        if (auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*> (param))
-            if (auto* raw = apvts.getRawParameterValue (withID->paramID))
-                xml.setAttribute (withID->paramID, (double) raw->load());
+        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                   .getChildFile ("PerreoTrapSynth").getChildFile ("Libraries");
     }
 
-    return xml.writeTo (file);
+    juce::File getLibraryFile (const juce::String& libName)
+    {
+        return getLibrariesFolder().getChildFile (juce::File::createLegalFileName (libName) + ".ptspack");
+    }
+
+    std::unique_ptr<juce::XmlElement> packToXml (const juce::String& packName,
+                                                 const std::vector<LibraryPreset>& presets)
+    {
+        auto xml = std::make_unique<juce::XmlElement> ("PerreoTrapSynthPack");
+        xml->setAttribute ("version", 1);
+        xml->setAttribute ("name", packName);
+
+        for (const auto& p : presets)
+        {
+            auto* e = xml->createNewChildElement ("Preset");
+            e->setAttribute ("name", p.name);
+            e->setAttribute ("category", p.category);
+
+            for (const auto& kv : p.values)
+                e->setAttribute (kv.first, (double) kv.second);
+        }
+
+        return xml;
+    }
+
+    bool xmlToPack (const juce::XmlElement& xml, PresetLibrary& out)
+    {
+        if (! xml.hasTagName ("PerreoTrapSynthPack"))
+            return false;
+
+        out.name = xml.getStringAttribute ("name").trim();
+        out.presets.clear();
+
+        for (auto* e : xml.getChildWithTagNameIterator ("Preset"))
+        {
+            if ((int) out.presets.size() >= maxPresetsPerPack)
+                break;
+
+            LibraryPreset lp;
+            lp.name     = e->getStringAttribute ("name", "Preset");
+            lp.category = e->getStringAttribute ("category").trim().toUpperCase();
+
+            for (int i = 0; i < e->getNumAttributes(); ++i)
+            {
+                const auto attr = e->getAttributeName (i);
+
+                if (attr == "name" || attr == "category")
+                    continue;
+
+                lp.values.emplace_back (attr, (float) e->getAttributeValue (i).getDoubleValue());
+            }
+
+            out.presets.push_back (std::move (lp));
+        }
+
+        return out.name.isNotEmpty() && ! out.presets.empty();
+    }
 }
 
-bool PerreoTrapSynthAudioProcessor::importPresetFromFile (const juce::File& file)
+void PerreoTrapSynthAudioProcessor::loadLibrariesFromDisk()
 {
-    auto xml = juce::XmlDocument::parse (file);
+    libraries.clear();
 
-    if (xml == nullptr || ! xml->hasTagName ("PerreoTrapSynthPreset"))
-        return false;
+    PresetLibrary user;
+    user.name = "USER";
 
-    int applied = 0;
+    std::vector<PresetLibrary> others;
 
+    for (const auto& f : getLibrariesFolder().findChildFiles (juce::File::findFiles, false, "*.ptspack"))
+    {
+        auto xml = juce::XmlDocument::parse (f);
+        PresetLibrary lib;
+
+        if (xml == nullptr || ! xmlToPack (*xml, lib))
+            continue;
+
+        if (lib.name == "USER")
+            user = std::move (lib);
+        else
+            others.push_back (std::move (lib));
+    }
+
+    std::sort (others.begin(), others.end(),
+               [] (const PresetLibrary& a, const PresetLibrary& b) { return a.name.compareIgnoreCase (b.name) < 0; });
+
+    libraries.push_back (std::move (user));
+
+    for (auto& l : others)
+        libraries.push_back (std::move (l));
+}
+
+void PerreoTrapSynthAudioProcessor::saveLibraryToDisk (int libIndex) const
+{
+    if (libIndex < 0 || libIndex >= (int) libraries.size())
+        return;
+
+    const auto& lib = libraries[(size_t) libIndex];
+    getLibrariesFolder().createDirectory();
+
+    if (auto xml = packToXml (lib.name, lib.presets))
+        xml->writeTo (getLibraryFile (lib.name));
+}
+
+void PerreoTrapSynthAudioProcessor::applyValues (const std::vector<std::pair<juce::String, float>>& values)
+{
     for (auto* param : getParameters())
     {
         auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*> (param);
@@ -810,28 +904,221 @@ bool PerreoTrapSynthAudioProcessor::importPresetFromFile (const juce::File& file
         if (withID == nullptr)
             continue;
 
-        if (xml->hasAttribute (withID->paramID))
+        bool found = false;
+
+        for (const auto& kv : values)
         {
-            const auto range = apvts.getParameterRange (withID->paramID);
-            const float value = juce::jlimit (range.start, range.end, (float) xml->getDoubleAttribute (withID->paramID));
-            setParameterValue (withID->paramID, value);
-            ++applied;
+            if (withID->paramID == kv.first)
+            {
+                const auto range = apvts.getParameterRange (withID->paramID);
+                setParameterValue (withID->paramID, juce::jlimit (range.start, range.end, kv.second));
+                found = true;
+                break;
+            }
         }
-        else
-        {
+
+        if (! found)
             resetParameterToDefault (withID->paramID);
+    }
+}
+
+LibraryPreset PerreoTrapSynthAudioProcessor::captureCurrentSound (const juce::String& name,
+                                                                  const juce::String& category) const
+{
+    LibraryPreset lp;
+    lp.name = name;
+    lp.category = category;
+
+    for (auto* param : getParameters())
+        if (auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*> (param))
+            if (auto* raw = apvts.getRawParameterValue (withID->paramID))
+                lp.values.emplace_back (withID->paramID, raw->load());
+
+    return lp;
+}
+
+void PerreoTrapSynthAudioProcessor::loadLibraryPreset (int libIndex, int presetIndex)
+{
+    if (libIndex < 0 || libIndex >= (int) libraries.size())
+        return;
+
+    const auto& lib = libraries[(size_t) libIndex];
+
+    if (presetIndex < 0 || presetIndex >= (int) lib.presets.size())
+        return;
+
+    const auto& p = lib.presets[(size_t) presetIndex];
+    applyValues (p.values);
+
+    customLibName    = lib.name;
+    customPresetName = p.name;
+}
+
+bool PerreoTrapSynthAudioProcessor::saveCurrentSoundToUser (const juce::String& name, const juce::String& category)
+{
+    const auto cleanName = name.trim();
+
+    if (cleanName.isEmpty() || libraries.empty())
+        return false;
+
+    auto& user = libraries[0];
+    auto lp = captureCurrentSound (cleanName, category);
+
+    bool replaced = false;
+
+    for (auto& existing : user.presets)
+    {
+        if (existing.name.equalsIgnoreCase (cleanName))
+        {
+            existing = lp;
+            replaced = true;
+            break;
         }
     }
 
-    if (applied == 0)
+    if (! replaced)
+        user.presets.push_back (std::move (lp));
+
+    saveLibraryToDisk (0);
+
+    customLibName    = user.name;
+    customPresetName = cleanName;
+    return true;
+}
+
+void PerreoTrapSynthAudioProcessor::removeLibrary (int libIndex)
+{
+    if (libIndex <= 0 || libIndex >= (int) libraries.size())   // USER no se borra
+        return;
+
+    const auto name = libraries[(size_t) libIndex].name;
+    getLibraryFile (name).deleteFile();
+    libraries.erase (libraries.begin() + libIndex);
+
+    if (customLibName == name)
+    {
+        customLibName    = juce::String();
+        customPresetName = juce::String();
+    }
+}
+
+std::vector<LibraryPreset> PerreoTrapSynthAudioProcessor::collectLibrary (int libIndex) const
+{
+    if (libIndex < 0 || libIndex >= (int) libraries.size())
+        return {};
+
+    return libraries[(size_t) libIndex].presets;
+}
+
+std::vector<LibraryPreset> PerreoTrapSynthAudioProcessor::collectFactory (int genre) const
+{
+    std::vector<LibraryPreset> out;
+    const auto& table = getPresetTable();
+
+    for (int i = 0; i < numPresets; ++i)
+    {
+        if (genre >= 0 && PresetLayout::genreOf (i) != genre)
+            continue;
+
+        LibraryPreset lp;
+        lp.name = table[(size_t) i].name;
+        lp.category = PresetLayout::categoryName (PresetLayout::categoryOf (i));
+
+        // Valores completos: lo que el preset indica + el valor por defecto del resto
+        for (auto* param : getParameters())
+        {
+            auto* withID = dynamic_cast<juce::AudioProcessorParameterWithID*> (param);
+
+            if (withID == nullptr)
+                continue;
+
+            float value = param->convertFrom0to1 (param->getDefaultValue());
+
+            for (const auto& kv : table[(size_t) i].values)
+                if (withID->paramID == kv.first)
+                    value = kv.second;
+
+            lp.values.emplace_back (withID->paramID, value);
+        }
+
+        out.push_back (std::move (lp));
+    }
+
+    return out;
+}
+
+bool PerreoTrapSynthAudioProcessor::exportPack (const juce::File& file, const juce::String& packName,
+                                                const std::vector<LibraryPreset>& presets) const
+{
+    if (presets.empty())
         return false;
 
-    customPresetName = xml->getStringAttribute ("name", file.getFileNameWithoutExtension());
+    auto xml = packToXml (packName, presets);
+    return xml != nullptr && xml->writeTo (file);
+}
 
-    if (customPresetName.isEmpty())
-        customPresetName = file.getFileNameWithoutExtension();
+int PerreoTrapSynthAudioProcessor::importPack (const juce::File& file, juce::String& packNameOut)
+{
+    auto xml = juce::XmlDocument::parse (file);
 
-    return true;
+    if (xml == nullptr)
+        return 0;
+
+    // Compatibilidad: un .ptspreset suelto (version anterior) se guarda en USER
+    if (xml->hasTagName ("PerreoTrapSynthPreset"))
+    {
+        LibraryPreset lp;
+        lp.name = xml->getStringAttribute ("name", file.getFileNameWithoutExtension());
+
+        for (int i = 0; i < xml->getNumAttributes(); ++i)
+        {
+            const auto attr = xml->getAttributeName (i);
+
+            if (attr != "name" && attr != "version")
+                lp.values.emplace_back (attr, (float) xml->getAttributeValue (i).getDoubleValue());
+        }
+
+        if (lp.values.empty() || libraries.empty())
+            return 0;
+
+        libraries[0].presets.push_back (std::move (lp));
+        saveLibraryToDisk (0);
+        packNameOut = "USER";
+        return 1;
+    }
+
+    PresetLibrary lib;
+
+    if (! xmlToPack (*xml, lib))
+        return 0;
+
+    if (lib.name.equalsIgnoreCase ("USER"))
+        lib.name = "USER (imported)";
+
+    const int count = (int) lib.presets.size();
+    packNameOut = lib.name;
+
+    // Misma libreria importada otra vez = se reemplaza
+    int existing = -1;
+
+    for (int i = 1; i < (int) libraries.size(); ++i)
+        if (libraries[(size_t) i].name.equalsIgnoreCase (lib.name))
+            existing = i;
+
+    int saveIndex = existing;
+
+    if (existing >= 0)
+    {
+        libraries[(size_t) existing] = std::move (lib);
+    }
+    else
+    {
+        libraries.push_back (std::move (lib));
+        saveIndex = (int) libraries.size() - 1;
+    }
+
+    saveLibraryToDisk (saveIndex);
+    return count;
 }
 
 //==============================================================================
@@ -842,6 +1129,7 @@ void PerreoTrapSynthAudioProcessor::getStateInformation (juce::MemoryBlock& dest
     auto state = apvts.copyState();
     state.setProperty ("presetIndex", currentPreset.load(), nullptr);
     state.setProperty ("customPresetName", customPresetName, nullptr);
+    state.setProperty ("customLibName", customLibName, nullptr);
 
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
@@ -856,6 +1144,7 @@ void PerreoTrapSynthAudioProcessor::setStateInformation (const void* data, int s
             auto tree = juce::ValueTree::fromXml (*xml);
             currentPreset.store (juce::jlimit (0, numPresets - 1, (int) tree.getProperty ("presetIndex", 0)));
             customPresetName = tree.getProperty ("customPresetName", juce::String()).toString();
+            customLibName    = tree.getProperty ("customLibName", juce::String()).toString();
             apvts.replaceState (tree);
         }
     }

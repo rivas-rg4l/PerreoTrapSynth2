@@ -5,15 +5,15 @@
 #include <vector>
 
 //==============================================================================
-// Organizacion de presets:  2 divisiones x 6 categorias x 5 presets = 60
+// Organizacion de presets:  2 divisiones x 6 categorias x 9 presets = 108
 //
-//   indice = genero * 30 + categoria * 5 + slot
+//   indice = genero * 54 + categoria * 9 + slot
 //==============================================================================
 namespace PresetLayout
 {
     constexpr int numGenres     = 2;
     constexpr int numCategories = 6;
-    constexpr int perCategory   = 5;
+    constexpr int perCategory   = 9;
     constexpr int perGenre      = numCategories * perCategory;
     constexpr int total         = numGenres * perGenre;
 

@@ -9,17 +9,9 @@ namespace
         return juce::Font (juce::FontOptions (size, juce::Font::bold));
     }
 
-    // Dibuja un trazo con halo de neon
-    void strokeGlow (juce::Graphics& g, const juce::Path& path, juce::Colour c, float width, float glowAlpha = 0.07f)
+    // Trazo limpio (sin halo)
+    void strokeGlow (juce::Graphics& g, const juce::Path& path, juce::Colour c, float width, float = 0.0f)
     {
-        for (int i = 3; i >= 1; --i)
-        {
-            g.setColour (c.withAlpha (glowAlpha * (float) (4 - i)));
-            g.strokePath (path, juce::PathStrokeType (width + (float) i * 3.5f,
-                                                      juce::PathStrokeType::curved,
-                                                      juce::PathStrokeType::rounded));
-        }
-
         g.setColour (c);
         g.strokePath (path, juce::PathStrokeType (width, juce::PathStrokeType::curved,
                                                   juce::PathStrokeType::rounded));
@@ -28,12 +20,6 @@ namespace
     void outlineGlow (juce::Graphics& g, juce::Rectangle<float> r, float corner, juce::Colour c,
                       float width, float alpha = 1.0f)
     {
-        for (int i = 3; i >= 1; --i)
-        {
-            g.setColour (c.withAlpha (0.05f * (float) (4 - i) * alpha));
-            g.drawRoundedRectangle (r.expanded ((float) i * 0.8f), corner + (float) i * 0.8f, width + (float) i * 2.0f);
-        }
-
         g.setColour (c.withAlpha (alpha));
         g.drawRoundedRectangle (r, corner, width);
     }
@@ -179,7 +165,7 @@ void NeonLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& butto
 {
     const bool on = button.getToggleState();
 
-    g.setFont (boldFont (juce::jlimit (11.0f, 17.0f, (float) button.getHeight() * 0.42f)));
+    g.setFont (boldFont (juce::jlimit (10.5f, 13.5f, (float) button.getHeight() * 0.42f)));
 
     if (on)
         g.setColour (juce::Colours::white);
@@ -299,7 +285,8 @@ void ComboComp::resized()
 //==============================================================================
 // NeonPanel
 //==============================================================================
-NeonPanel::NeonPanel (const juce::String& t, juce::Colour c) : title (t), accent (c)
+NeonPanel::NeonPanel (const juce::String& t, juce::Colour c, const juce::String& sub)
+    : title (t), subtitle (sub), accent (c)
 {
 }
 
@@ -360,6 +347,23 @@ void NeonPanel::paint (juce::Graphics& g)
     g.setColour (on ? accent : textDim);
     g.drawText (title, 14, 6, getWidth() - 80, 18, juce::Justification::centredLeft, false);
 
+    // Subtitulo explicativo (en gris, a la derecha del titulo)
+    if (subtitle.isNotEmpty())
+    {
+        juce::GlyphArrangement ga;
+        ga.addLineOfText (boldFont (12.5f), title, 0.0f, 0.0f);
+        const int tw = (int) ga.getBoundingBox (0, -1, true).getWidth();
+        const int x0 = 14 + tw + 10;
+        const int x1 = getWidth() - 14 - (hasPower ? 60 : 0);
+
+        if (x1 - x0 > 40)
+        {
+            g.setFont (juce::Font (juce::FontOptions (11.0f)));
+            g.setColour (textDim.withAlpha (on ? 0.9f : 0.5f));
+            g.drawFittedText (subtitle, x0, 6, x1 - x0, 18, juce::Justification::centredLeft, 1, 0.85f);
+        }
+    }
+
     // Linea bajo el titulo
     g.setColour (accent.withAlpha (on ? 0.35f : 0.12f));
     g.fillRect (14.0f, 26.0f, (float) getWidth() - 28.0f, 1.0f);
@@ -406,9 +410,10 @@ ComboComp& PerreoTrapSynthAudioProcessorEditor::addCombo (NeonPanel& target, con
     return *combos.back();
 }
 
-NeonPanel& PerreoTrapSynthAudioProcessorEditor::addPanel (const juce::String& title, juce::Colour accent, int row)
+NeonPanel& PerreoTrapSynthAudioProcessorEditor::addPanel (const juce::String& title, juce::Colour accent, int row,
+                                                          const juce::String& subtitle)
 {
-    panels.push_back (std::make_unique<NeonPanel> (title, accent));
+    panels.push_back (std::make_unique<NeonPanel> (title, accent, subtitle));
     addAndMakeVisible (*panels.back());
     rows[(size_t) row].push_back (panels.back().get());
     return *panels.back();
@@ -420,99 +425,46 @@ PerreoTrapSynthAudioProcessorEditor::PerreoTrapSynthAudioProcessorEditor (Perreo
     setLookAndFeel (&neonLookAndFeel);
 
     //--------------------------------------------------------------------------
-    // Navegador:  DIVISION  ->  CATEGORIA  ->  PRESET
+    // Navegador: un visor con el preset actual; click = menu completo
     //--------------------------------------------------------------------------
-    const juce::Colour genreColours[] = { magenta, cyan };
+    presetDisplay.onClick = [this] { showPresetMenu(); };
+    addAndMakeVisible (presetDisplay);
 
-    for (int g = 0; g < PresetLayout::numGenres; ++g)
-    {
-        auto& b = genreButtons[(size_t) g];
-        b.setButtonText (PresetLayout::genreName (g));
-        b.setClickingTogglesState (true);
-        b.setRadioGroupId (101);
-        b.setColour (juce::TextButton::buttonOnColourId, genreColours[g]);
-        b.onClick = [this, g]
-        {
-            const int cur = processorRef.getCurrentProgram();
-            loadPreset (g, PresetLayout::categoryOf (cur), PresetLayout::slotOf (cur));
-        };
-        addAndMakeVisible (b);
-    }
-
-    for (int c = 0; c < PresetLayout::numCategories; ++c)
-    {
-        auto& b = categoryButtons[(size_t) c];
-        b.setButtonText (PresetLayout::categoryName (c));
-        b.setClickingTogglesState (true);
-        b.setRadioGroupId (102);
-        b.onClick = [this, c]
-        {
-            loadPreset (PresetLayout::genreOf (processorRef.getCurrentProgram()), c, 0);
-        };
-        addAndMakeVisible (b);
-    }
-
-    for (int s = 0; s < PresetLayout::perCategory; ++s)
-    {
-        auto& b = slotButtons[(size_t) s];
-        b.setClickingTogglesState (true);
-        b.setRadioGroupId (103);
-        b.onClick = [this, s]
-        {
-            const int cur = processorRef.getCurrentProgram();
-            loadPreset (PresetLayout::genreOf (cur), PresetLayout::categoryOf (cur), s);
-        };
-        addAndMakeVisible (b);
-    }
-
-    for (auto* b : { &prevButton, &nextButton, &importButton, &exportButton })
+    for (auto* b : { &prevButton, &nextButton, &saveButton, &importButton, &exportButton })
     {
         b->setColour (juce::TextButton::buttonOnColourId, cyan);
         addAndMakeVisible (*b);
     }
 
-    prevButton.onClick = [this]
-    {
-        const int n = PerreoTrapSynthAudioProcessor::numPresets;
-        processorRef.setCurrentProgram ((processorRef.getCurrentProgram() + n - 1) % n);
-        syncBrowser();
-    };
+    prevButton.onClick   = [this] { stepPreset (-1); };
+    nextButton.onClick   = [this] { stepPreset (+1); };
+    saveButton.onClick   = [this] { saveToUser(); };
+    importButton.onClick = [this] { importPack(); };
+    exportButton.onClick = [this] { exportPackMenu(); };
 
-    nextButton.onClick = [this]
-    {
-        processorRef.setCurrentProgram ((processorRef.getCurrentProgram() + 1) % PerreoTrapSynthAudioProcessor::numPresets);
-        syncBrowser();
-    };
-
-    importButton.onClick = [this] { importPreset(); };
-    exportButton.onClick = [this] { exportPreset(); };
-
-    presetNameLabel.setFont (boldFont (16.0f));
-    presetNameLabel.setColour (juce::Label::textColourId, juce::Colours::white);
-    presetNameLabel.setJustificationType (juce::Justification::centred);
-    presetNameLabel.setInterceptsMouseClicks (false, false);
-    addAndMakeVisible (presetNameLabel);
+    prevButton.setTooltip ("Preset anterior");
+    nextButton.setTooltip ("Preset siguiente");
 
     //--------------------------------------------------------------------------
     // Paneles de sonido
     //--------------------------------------------------------------------------
     // Fila 1: osciladores
     {
-        auto& a = addPanel ("OSCILLATOR A", magenta, 0);
+        auto& a = addPanel ("OSCILLATOR A", magenta, 0, "el sonido base");
         addCombo (a, "aWave", "WAVE", magenta);
         addKnob (a, "aOct",  "OCTAVE", magenta);
         addKnob (a, "aSemi", "SEMI",   magenta);
         addKnob (a, "aFine", "FINE",   magenta);
         addKnob (a, "aLvl",  "LEVEL",  magenta);
 
-        auto& b = addPanel ("OSCILLATOR B", cyan, 0);
+        auto& b = addPanel ("OSCILLATOR B", cyan, 0, "una segunda capa");
         addCombo (b, "bWave", "WAVE", cyan);
         addKnob (b, "bOct",  "OCTAVE", cyan);
         addKnob (b, "bSemi", "SEMI",   cyan);
         addKnob (b, "bFine", "FINE",   cyan);
         addKnob (b, "bLvl",  "LEVEL",  cyan);
 
-        auto& u = addPanel ("UNISON", violet, 0);
+        auto& u = addPanel ("UNISON", violet, 0, "mas voces = mas ancho y grueso");
         addKnob (u, "uniVoices", "VOICES", violet);
         addKnob (u, "uniDetune", "DETUNE", violet);
         addKnob (u, "uniSpread", "STEREO", violet);
@@ -520,41 +472,41 @@ PerreoTrapSynthAudioProcessorEditor::PerreoTrapSynthAudioProcessorEditor (Perreo
 
     // Fila 2: filtro, envolventes, master
     {
-        auto& f = addPanel ("FILTER", cyan, 1);
+        auto& f = addPanel ("FILTER", cyan, 1, "oscurece o abre el sonido");
         addCombo (f, "fltType", "TYPE", cyan);
         addKnob (f, "cutoff", "CUTOFF", cyan);
         addKnob (f, "reso",   "RESO",   cyan);
         addKnob (f, "fltEnv", "ENV AMT", cyan);
 
-        auto& fe = addPanel ("FILTER ENVELOPE", cyan, 1);
+        auto& fe = addPanel ("FILTER ENVELOPE", cyan, 1, "como se mueve el filtro");
         addKnob (fe, "fA", "ATTACK",  cyan);
         addKnob (fe, "fD", "DECAY",   cyan);
         addKnob (fe, "fS", "SUSTAIN", cyan);
         addKnob (fe, "fR", "RELEASE", cyan);
 
-        auto& ae = addPanel ("AMP ENVELOPE", magenta, 1);
+        auto& ae = addPanel ("AMP ENVELOPE", magenta, 1, "forma del volumen");
         addKnob (ae, "aA", "ATTACK",  magenta);
         addKnob (ae, "aD", "DECAY",   magenta);
         addKnob (ae, "aS", "SUSTAIN", magenta);
         addKnob (ae, "aR", "RELEASE", magenta);
 
-        auto& m = addPanel ("OUTPUT", lime, 1);
+        auto& m = addPanel ("OUTPUT", lime, 1, "volumen general");
         addKnob (m, "master", "MASTER", lime);
     }
 
     // Fila 3: LFO, pitch env, mezcla
     {
-        auto& l = addPanel ("LFO", lime, 2);
+        auto& l = addPanel ("LFO", lime, 2, "movimiento automatico");
         addCombo (l, "lfoShape", "SHAPE",  lime);
         addCombo (l, "lfoDest",  "TARGET", lime);
         addKnob  (l, "lfoRate",  "RATE",   lime);
         addKnob  (l, "lfoDepth", "DEPTH",  lime);
 
-        auto& pe = addPanel ("PITCH ENVELOPE", orange, 2);
+        auto& pe = addPanel ("PITCH ENVELOPE", orange, 2, "caida o subida de tono");
         addKnob (pe, "pitEnv", "AMOUNT", orange);
         addKnob (pe, "pitDec", "TIME",   orange);
 
-        auto& mix = addPanel ("SUB / NOISE / PULSE", violet, 2);
+        auto& mix = addPanel ("SUB / NOISE / PULSE", violet, 2, "grave extra, aire y ancho");
         addKnob (mix, "subLvl",   "SUB",   violet);
         addKnob (mix, "noiseLvl", "NOISE", violet);
         addKnob (mix, "pw",       "PULSE W", violet);
@@ -562,23 +514,23 @@ PerreoTrapSynthAudioProcessorEditor::PerreoTrapSynthAudioProcessorEditor (Perreo
 
     // Fila 4: efectos (cada uno con su interruptor)
     {
-        auto& d = addPanel ("DRIVE", orange, 3);
+        auto& d = addPanel ("DRIVE", orange, 3, "distorsion");
         addKnob (d, "drive", "AMOUNT", orange);
         d.addPowerSwitch (processorRef.apvts, "drvOn");
 
-        auto& c = addPanel ("CHORUS", cyan, 3);
+        auto& c = addPanel ("CHORUS", cyan, 3, "ensancha");
         addKnob (c, "choRate",  "RATE",  cyan);
         addKnob (c, "choDepth", "DEPTH", cyan);
         addKnob (c, "choMix",   "MIX",   cyan);
         c.addPowerSwitch (processorRef.apvts, "choOn");
 
-        auto& dl = addPanel ("DELAY", magenta, 3);
+        auto& dl = addPanel ("DELAY", magenta, 3, "eco");
         addKnob (dl, "dlyTime", "TIME",     magenta);
         addKnob (dl, "dlyFb",   "FEEDBACK", magenta);
         addKnob (dl, "dlyMix",  "MIX",      magenta);
         dl.addPowerSwitch (processorRef.apvts, "dlyOn");
 
-        auto& r = addPanel ("REVERB", violet, 3);
+        auto& r = addPanel ("REVERB", violet, 3, "espacio");
         addKnob (r, "revSize", "SIZE", violet);
         addKnob (r, "revMix",  "MIX",  violet);
         r.addPowerSwitch (processorRef.apvts, "revOn");
@@ -600,55 +552,95 @@ PerreoTrapSynthAudioProcessorEditor::~PerreoTrapSynthAudioProcessorEditor()
 }
 
 //------------------------------------------------------------------------------
-void PerreoTrapSynthAudioProcessorEditor::loadPreset (int genre, int category, int slot)
+// PresetDisplay
+//------------------------------------------------------------------------------
+void PresetDisplay::setText (const juce::String& pathText, const juce::String& nameText)
 {
-    processorRef.setCurrentProgram (PresetLayout::indexOf (genre, category, slot));
-    syncBrowser();
+    path = pathText;
+    name = nameText;
+    repaint();
 }
 
+void PresetDisplay::mouseUp (const juce::MouseEvent& e)
+{
+    if (e.mouseWasClicked() && getLocalBounds().contains (e.getPosition()) && onClick != nullptr)
+        onClick();
+}
+
+void PresetDisplay::paint (juce::Graphics& g)
+{
+    const auto r = getLocalBounds().toFloat().reduced (1.0f);
+
+    g.setColour (panelDeep.brighter (hover ? 0.12f : 0.0f));
+    g.fillRoundedRectangle (r, 8.0f);
+    g.setColour (cyan.withAlpha (hover ? 1.0f : 0.6f));
+    g.drawRoundedRectangle (r, 8.0f, 1.3f);
+
+    auto text = getLocalBounds().reduced (16, 5);
+    text.removeFromRight (30);
+
+    g.setFont (juce::Font (juce::FontOptions (11.5f)));
+    g.setColour (textDim);
+    g.drawFittedText (path, text.removeFromTop (14), juce::Justification::centredLeft, 1);
+
+    g.setFont (boldFont (19.0f));
+    g.setColour (juce::Colours::white);
+    g.drawFittedText (name, text, juce::Justification::centredLeft, 1);
+
+    // Flecha de desplegable
+    const float cx = (float) getWidth() - 20.0f;
+    const float cy = (float) getHeight() * 0.5f;
+    juce::Path arrow;
+    arrow.startNewSubPath (cx - 5.0f, cy - 3.0f);
+    arrow.lineTo (cx, cy + 3.0f);
+    arrow.lineTo (cx + 5.0f, cy - 3.0f);
+    g.setColour (cyan);
+    g.strokePath (arrow, juce::PathStrokeType (2.0f));
+}
+
+//------------------------------------------------------------------------------
+// Navegador
+//------------------------------------------------------------------------------
 void PerreoTrapSynthAudioProcessorEditor::syncBrowser()
 {
-    const int idx = processorRef.getCurrentProgram();
-    const int g = PresetLayout::genreOf (idx);
-    const int c = PresetLayout::categoryOf (idx);
-    const int s = PresetLayout::slotOf (idx);
+    const auto& libs = processorRef.getLibraries();
+    const auto customName = processorRef.getCustomPresetName();
+    const auto customLib  = processorRef.getCustomLibraryName();
 
-    if (g != shownGenre)
+    juce::String path, name;
+    bool fromLibrary = false;
+
+    if (customName.isNotEmpty())
     {
-        shownGenre = g;
-        const auto accent = (g == 0) ? magenta : cyan;
+        for (const auto& lib : libs)
+        {
+            if (lib.name != customLib)
+                continue;
 
-        for (auto& b : categoryButtons) b.setColour (juce::TextButton::buttonOnColourId, accent);
-        for (auto& b : slotButtons)     b.setColour (juce::TextButton::buttonOnColourId, accent);
+            fromLibrary = true;
+            path = lib.name.toUpperCase() + "  /  LIBRARY";
 
-        repaint();
+            for (const auto& p : lib.presets)
+                if (p.name == customName && p.category.isNotEmpty())
+                    path = lib.name.toUpperCase() + "  /  " + p.category;
+        }
+
+        name = customName;
     }
 
-    for (int i = 0; i < PresetLayout::numGenres; ++i)
-        genreButtons[(size_t) i].setToggleState (i == g, juce::dontSendNotification);
-
-    for (int i = 0; i < PresetLayout::numCategories; ++i)
-        categoryButtons[(size_t) i].setToggleState (i == c, juce::dontSendNotification);
-
-    for (int i = 0; i < PresetLayout::perCategory; ++i)
+    if (! fromLibrary)
     {
-        auto& b = slotButtons[(size_t) i];
-        b.setButtonText (processorRef.getPresetShortName (PresetLayout::indexOf (g, c, i)));
-        b.setToggleState (i == s, juce::dontSendNotification);
+        using namespace PresetLayout;
+        const int idx = processorRef.getCurrentProgram();
+        path = juce::String (genreName (genreOf (idx))) + "  /  " + categoryName (categoryOf (idx));
+        name = processorRef.getPresetShortName (idx);
     }
 
-    const juce::String custom = processorRef.getCustomPresetName();
-    juce::String text;
-
-    if (custom.isNotEmpty())
-        text = "IMPORTED:  " + custom;
-    else
-        text = processorRef.getProgramName (idx).replace (" - ", "   /   ");
-
-    if (text != shownName)
+    if (path != shownPath || name != shownName)
     {
-        shownName = text;
-        presetNameLabel.setText (text, juce::dontSendNotification);
+        shownPath = path;
+        shownName = name;
+        presetDisplay.setText (path, name);
     }
 }
 
@@ -660,13 +652,195 @@ void PerreoTrapSynthAudioProcessorEditor::timerCallback()
         p->refreshPowerLook();
 }
 
+void PerreoTrapSynthAudioProcessorEditor::showPresetMenu()
+{
+    using namespace PresetLayout;
+
+    // IDs: fabrica 1..total | quitar libreria 9000+i | preset de libreria 10000 + lib*500 + n
+    juce::PopupMenu root;
+    const int current = processorRef.getCustomPresetName().isEmpty() ? processorRef.getCurrentProgram() : -1;
+
+    root.addSectionHeader ("FACTORY");
+
+    for (int g = 0; g < numGenres; ++g)
+    {
+        juce::PopupMenu genreMenu;
+
+        for (int c = 0; c < numCategories; ++c)
+        {
+            juce::PopupMenu catMenu;
+
+            for (int s = 0; s < perCategory; ++s)
+            {
+                const int idx = indexOf (g, c, s);
+                catMenu.addItem (1 + idx, processorRef.getPresetShortName (idx), true, idx == current);
+            }
+
+            genreMenu.addSubMenu (categoryName (c), catMenu);
+        }
+
+        root.addSubMenu (genreName (g), genreMenu);
+    }
+
+    const auto& libs = processorRef.getLibraries();
+    const auto customLib  = processorRef.getCustomLibraryName();
+    const auto customName = processorRef.getCustomPresetName();
+
+    root.addSeparator();
+    root.addSectionHeader ("LIBRARIES");
+
+    for (int li = 0; li < (int) libs.size(); ++li)
+    {
+        const auto& lib = libs[(size_t) li];
+        juce::PopupMenu libMenu;
+
+        if (lib.presets.empty())
+        {
+            libMenu.addItem (-1, "(empty - use SAVE to add sounds)", false, false);
+        }
+        else
+        {
+            // Agrupa por categoria si los presets la traen
+            juce::StringArray cats;
+
+            for (const auto& p : lib.presets)
+                if (p.category.isNotEmpty())
+                    cats.addIfNotAlreadyThere (p.category);
+
+            auto isCurrent = [&] (const LibraryPreset& p) { return lib.name == customLib && p.name == customName; };
+
+            for (const auto& cat : cats)
+            {
+                juce::PopupMenu catMenu;
+
+                for (int pi = 0; pi < (int) lib.presets.size(); ++pi)
+                    if (lib.presets[(size_t) pi].category == cat)
+                        catMenu.addItem (10000 + li * 500 + pi, lib.presets[(size_t) pi].name, true,
+                                         isCurrent (lib.presets[(size_t) pi]));
+
+                libMenu.addSubMenu (cat, catMenu);
+            }
+
+            for (int pi = 0; pi < (int) lib.presets.size(); ++pi)
+                if (lib.presets[(size_t) pi].category.isEmpty())
+                    libMenu.addItem (10000 + li * 500 + pi, lib.presets[(size_t) pi].name, true,
+                                     isCurrent (lib.presets[(size_t) pi]));
+        }
+
+        if (li > 0)
+        {
+            libMenu.addSeparator();
+            libMenu.addItem (9000 + li, "Remove this library");
+        }
+
+        root.addSubMenu (lib.name + "  (" + juce::String ((int) lib.presets.size()) + ")", libMenu);
+    }
+
+    juce::Component::SafePointer<PerreoTrapSynthAudioProcessorEditor> safeThis (this);
+
+    root.showMenuAsync (juce::PopupMenu::Options()
+                            .withTargetComponent (&presetDisplay)
+                            .withMinimumWidth (presetDisplay.getWidth()),
+                        [safeThis] (int result)
+    {
+        if (safeThis == nullptr || result <= 0)
+            return;
+
+        auto& proc = safeThis->processorRef;
+
+        if (result <= PresetLayout::total)
+            proc.setCurrentProgram (result - 1);
+        else if (result >= 10000)
+            proc.loadLibraryPreset ((result - 10000) / 500, (result - 10000) % 500);
+        else if (result >= 9000)
+            proc.removeLibrary (result - 9000);
+
+        safeThis->syncBrowser();
+    });
+}
+
+void PerreoTrapSynthAudioProcessorEditor::stepPreset (int direction)
+{
+    const auto& libs = processorRef.getLibraries();
+    const auto customName = processorRef.getCustomPresetName();
+    const auto customLib  = processorRef.getCustomLibraryName();
+
+    if (customName.isNotEmpty())
+    {
+        for (int li = 0; li < (int) libs.size(); ++li)
+        {
+            if (libs[(size_t) li].name != customLib)
+                continue;
+
+            const int n = (int) libs[(size_t) li].presets.size();
+
+            for (int pi = 0; pi < n; ++pi)
+            {
+                if (libs[(size_t) li].presets[(size_t) pi].name == customName)
+                {
+                    processorRef.loadLibraryPreset (li, (pi + direction + n) % n);
+                    syncBrowser();
+                    return;
+                }
+            }
+        }
+    }
+
+    const int n = PerreoTrapSynthAudioProcessor::numPresets;
+    processorRef.setCurrentProgram ((processorRef.getCurrentProgram() + direction + n) % n);
+    syncBrowser();
+}
+
 //------------------------------------------------------------------------------
-void PerreoTrapSynthAudioProcessorEditor::importPreset()
+// Guardar el sonido actual en USER
+//------------------------------------------------------------------------------
+void PerreoTrapSynthAudioProcessorEditor::saveToUser()
+{
+    auto* aw = new juce::AlertWindow ("Save sound",
+                                      "Se guarda en la libreria USER. Despues puedes exportarla como pack.",
+                                      juce::MessageBoxIconType::NoIcon, this);
+
+    const auto suggested = processorRef.getCustomPresetName().isNotEmpty()
+                               ? processorRef.getCustomPresetName()
+                               : processorRef.getPresetShortName (processorRef.getCurrentProgram());
+
+    aw->addTextEditor ("name", suggested, "Name");
+
+    juce::StringArray cats { "(no category)" };
+
+    for (int c = 0; c < PresetLayout::numCategories; ++c)
+        cats.add (PresetLayout::categoryName (c));
+
+    aw->addComboBox ("cat", cats, "Category");
+    aw->getComboBoxComponent ("cat")->setSelectedItemIndex (0, juce::dontSendNotification);
+
+    aw->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
+    aw->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    juce::Component::SafePointer<PerreoTrapSynthAudioProcessorEditor> safeThis (this);
+
+    aw->enterModalState (true, juce::ModalCallbackFunction::create ([safeThis, aw] (int result)
+    {
+        if (result != 1 || safeThis == nullptr)
+            return;
+
+        const int catIndex = aw->getComboBoxComponent ("cat")->getSelectedItemIndex();
+        const juce::String cat = catIndex > 0 ? juce::String (PresetLayout::categoryName (catIndex - 1)) : juce::String();
+
+        safeThis->processorRef.saveCurrentSoundToUser (aw->getTextEditorContents ("name"), cat);
+        safeThis->syncBrowser();
+    }), true);
+}
+
+//------------------------------------------------------------------------------
+// Packs
+//------------------------------------------------------------------------------
+void PerreoTrapSynthAudioProcessorEditor::importPack()
 {
     fileChooser = std::make_unique<juce::FileChooser> (
-        "Importar preset",
+        "Import pack",
         juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
-        "*.ptspreset");
+        "*.ptspack;*.ptspreset");
 
     juce::Component::SafePointer<PerreoTrapSynthAudioProcessorEditor> safeThis (this);
 
@@ -681,35 +855,73 @@ void PerreoTrapSynthAudioProcessorEditor::importPreset()
         if (! file.existsAsFile())
             return;
 
-        if (! safeThis->processorRef.importPresetFromFile (file))
+        juce::String packName;
+        const int n = safeThis->processorRef.importPack (file, packName);
+
+        if (n == 0)
         {
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
-                                                    "Importar preset",
-                                                    "El archivo no es un preset valido de PerreoTrapSynth.");
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Import pack",
+                                                    "El archivo no es un pack valido de PerreoTrapSynth.");
             return;
         }
 
+        juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::InfoIcon, "Import pack",
+                                                "Libreria \"" + packName + "\" importada (" + juce::String (n)
+                                                    + " presets). La encuentras en el menu de presets, seccion LIBRARIES.");
         safeThis->syncBrowser();
     });
 }
 
-void PerreoTrapSynthAudioProcessorEditor::exportPreset()
+void PerreoTrapSynthAudioProcessorEditor::exportPackMenu()
 {
-    const juce::String custom = processorRef.getCustomPresetName();
-    const juce::String presetName = custom.isNotEmpty() ? custom
-                                                        : processorRef.getPresetShortName (processorRef.getCurrentProgram());
+    juce::PopupMenu menu;
+    menu.addSectionHeader ("EXPORT AS PACK");
 
+    const auto& libs = processorRef.getLibraries();
+
+    for (int li = 0; li < (int) libs.size(); ++li)
+        menu.addItem (100 + li, libs[(size_t) li].name + "  (" + juce::String ((int) libs[(size_t) li].presets.size()) + ")",
+                      ! libs[(size_t) li].presets.empty());
+
+    menu.addSeparator();
+    menu.addItem (10, "Factory - TRAP");
+    menu.addItem (11, "Factory - REGGAETON");
+    menu.addItem (12, "Factory - ALL");
+
+    juce::Component::SafePointer<PerreoTrapSynthAudioProcessorEditor> safeThis (this);
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&exportButton),
+                        [safeThis] (int result)
+    {
+        if (safeThis == nullptr || result <= 0)
+            return;
+
+        auto& proc = safeThis->processorRef;
+
+        if (result >= 100)
+        {
+            const int li = result - 100;
+            safeThis->doExport (proc.getLibraries()[(size_t) li].name, proc.collectLibrary (li));
+        }
+        else if (result == 10) safeThis->doExport ("Factory TRAP",      proc.collectFactory (0));
+        else if (result == 11) safeThis->doExport ("Factory REGGAETON", proc.collectFactory (1));
+        else if (result == 12) safeThis->doExport ("Factory ALL",       proc.collectFactory (-1));
+    });
+}
+
+void PerreoTrapSynthAudioProcessorEditor::doExport (const juce::String& packName, std::vector<LibraryPreset> presets)
+{
     const auto defaultFile = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
-                                 .getChildFile (juce::File::createLegalFileName (presetName) + ".ptspreset");
+                                 .getChildFile (juce::File::createLegalFileName (packName) + ".ptspack");
 
-    fileChooser = std::make_unique<juce::FileChooser> ("Exportar preset", defaultFile, "*.ptspreset");
+    fileChooser = std::make_unique<juce::FileChooser> ("Export pack", defaultFile, "*.ptspack");
 
     juce::Component::SafePointer<PerreoTrapSynthAudioProcessorEditor> safeThis (this);
 
     fileChooser->launchAsync (juce::FileBrowserComponent::saveMode
                                   | juce::FileBrowserComponent::canSelectFiles
                                   | juce::FileBrowserComponent::warnAboutOverwriting,
-                              [safeThis, presetName] (const juce::FileChooser& chooser)
+                              [safeThis, packName, presets = std::move (presets)] (const juce::FileChooser& chooser)
     {
         if (safeThis == nullptr)
             return;
@@ -719,15 +931,12 @@ void PerreoTrapSynthAudioProcessorEditor::exportPreset()
         if (file == juce::File())
             return;
 
-        if (! file.hasFileExtension ("ptspreset"))
-            file = juce::File (file.getFullPathName() + ".ptspreset");
+        if (! file.hasFileExtension ("ptspack"))
+            file = juce::File (file.getFullPathName() + ".ptspack");
 
-        if (! safeThis->processorRef.exportPresetToFile (file, presetName))
-        {
-            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
-                                                    "Exportar preset",
-                                                    "No se pudo guardar el archivo.");
-        }
+        if (! safeThis->processorRef.exportPack (file, packName, presets))
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon, "Export pack",
+                                                    "No se pudo guardar el pack.");
     });
 }
 
@@ -737,76 +946,35 @@ void PerreoTrapSynthAudioProcessorEditor::paint (juce::Graphics& g)
     const float w = (float) getWidth();
     const float h = (float) getHeight();
 
-    // Fondo
+    // Fondo liso
     g.setGradientFill (juce::ColourGradient (bgTop, 0.0f, 0.0f, bgBottom, 0.0f, h, false));
     g.fillAll();
 
-    // Resplandores de esquina
-    g.setGradientFill (juce::ColourGradient (magenta.withAlpha (0.16f), 0.0f, 0.0f,
-                                             magenta.withAlpha (0.0f), w * 0.45f, h * 0.35f, true));
-    g.fillRect (getLocalBounds());
-    g.setGradientFill (juce::ColourGradient (cyan.withAlpha (0.13f), w, h,
-                                             cyan.withAlpha (0.0f), w * 0.55f, h * 0.6f, true));
-    g.fillRect (getLocalBounds());
-
-    // Rejilla sutil
-    g.setColour (violet.withAlpha (0.045f));
-    for (float x = 0.0f; x < w; x += 32.0f) g.drawVerticalLine ((int) x, 0.0f, h);
-    for (float y = 0.0f; y < h; y += 32.0f) g.drawHorizontalLine ((int) y, 0.0f, w);
-
-    // Lineas neon superior e inferior
-    g.setGradientFill (juce::ColourGradient (magenta, 0.0f, 0.0f, cyan, w, 0.0f, false));
-    g.fillRect (0.0f, 0.0f, w, 3.0f);
-    g.fillRect (0.0f, h - 3.0f, w, 3.0f);
-
-    // Titulo con halo
-    const auto titleFont = boldFont (28.0f);
-    const juce::String part1 = "PERREO TRAP ";
-    const juce::String part2 = "SYNTH";
-
-    juce::GlyphArrangement ga1, ga2;
-    ga1.addLineOfText (titleFont, part1, 0.0f, 0.0f);
-    ga2.addLineOfText (titleFont, part2, 0.0f, 0.0f);
-
-    const float w1 = ga1.getBoundingBox (0, -1, true).getWidth();
-    const float w2 = ga2.getBoundingBox (0, -1, true).getWidth();
-
-    const juce::Rectangle<float> area1 (18.0f, 6.0f, w1 + 4.0f, 38.0f);
-    const juce::Rectangle<float> area2 (18.0f + w1, 6.0f, w2 + 4.0f, 38.0f);
-
-    g.setFont (titleFont);
-
-    for (int dx = -2; dx <= 2; dx += 2)
-    {
-        for (int dy = -2; dy <= 2; dy += 2)
-        {
-            g.setColour (magenta.withAlpha (0.10f));
-            g.drawText (part1, area1.translated ((float) dx, (float) dy), juce::Justification::centredLeft, false);
-            g.setColour (cyan.withAlpha (0.10f));
-            g.drawText (part2, area2.translated ((float) dx, (float) dy), juce::Justification::centredLeft, false);
-        }
-    }
-
+    // Linea de acento superior
     g.setColour (magenta);
-    g.drawText (part1, area1, juce::Justification::centredLeft, false);
-    g.setColour (cyan);
-    g.drawText (part2, area2, juce::Justification::centredLeft, false);
+    g.fillRect (0.0f, 0.0f, w, 2.0f);
 
-    g.setFont (boldFont (11.0f));
+    // Titulo
+    g.setFont (boldFont (24.0f));
+    g.setColour (juce::Colours::white);
+    g.drawText ("PERREO TRAP", 18, 6, 190, 34, juce::Justification::centredLeft, false);
+    g.setColour (cyan);
+    g.drawText ("SYNTH", 18 + 164, 6, 120, 34, juce::Justification::centredLeft, false);
+
+    g.setFont (juce::Font (juce::FontOptions (11.5f)));
     g.setColour (textDim);
-    g.drawText ("60 PRESETS   |   TRAP  x  REGGAETON   |   DOUBLE-CLICK A KNOB TO RESET",
+    g.drawText (juce::String (PresetLayout::total) + " factory presets   |   click the preset name to browse   |   double-click a knob to reset it",
                 getLocalBounds().withTrimmedRight (18).withHeight (44),
                 juce::Justification::centredRight, false);
 
     // Caja del navegador
     if (! browserBounds.isEmpty())
     {
-        const auto accent = (shownGenre == 1) ? cyan : magenta;
         const auto r = browserBounds.toFloat().reduced (1.5f);
-
-        g.setColour (panel.withAlpha (0.9f));
-        g.fillRoundedRectangle (r, 12.0f);
-        outlineGlow (g, r, 12.0f, accent, 1.4f, 0.7f);
+        g.setColour (panel);
+        g.fillRoundedRectangle (r, 10.0f);
+        g.setColour (cyan.withAlpha (0.35f));
+        g.drawRoundedRectangle (r, 10.0f, 1.2f);
     }
 }
 
@@ -816,58 +984,23 @@ void PerreoTrapSynthAudioProcessorEditor::resized()
     area.removeFromTop (38); // titulo
 
     //--------------------------------------------------------------------------
-    // Navegador
+    // Navegador:  [<] [ preset actual (click = menu) ] [>]   SAVE | IMPORT | EXPORT
     //--------------------------------------------------------------------------
-    browserBounds = area.removeFromTop (118);
-    auto b = browserBounds.reduced (12, 8);
+    browserBounds = area.removeFromTop (60);
+    auto row = browserBounds.reduced (10, 8);
 
-    {
-        auto row = b.removeFromTop (34);
+    exportButton.setBounds (row.removeFromRight (104));
+    row.removeFromRight (6);
+    importButton.setBounds (row.removeFromRight (104));
+    row.removeFromRight (6);
+    saveButton.setBounds (row.removeFromRight (64));
+    row.removeFromRight (14);
 
-        for (auto& g : genreButtons)
-        {
-            g.setBounds (row.removeFromLeft (150));
-            row.removeFromLeft (8);
-        }
-
-        exportButton.setBounds (row.removeFromRight (84));
-        row.removeFromRight (6);
-        importButton.setBounds (row.removeFromRight (84));
-        row.removeFromRight (12);
-        nextButton.setBounds (row.removeFromRight (34));
-        row.removeFromRight (6);
-        prevButton.setBounds (row.removeFromRight (34));
-
-        presetNameLabel.setBounds (row.reduced (10, 0));
-    }
-
-    b.removeFromTop (8);
-
-    {
-        auto row = b.removeFromTop (28);
-        const int gap = 6;
-        const int w = (row.getWidth() - gap * (PresetLayout::numCategories - 1)) / PresetLayout::numCategories;
-
-        for (auto& c : categoryButtons)
-        {
-            c.setBounds (row.removeFromLeft (w));
-            row.removeFromLeft (gap);
-        }
-    }
-
-    b.removeFromTop (8);
-
-    {
-        auto row = b.removeFromTop (juce::jmin (32, b.getHeight()));
-        const int gap = 6;
-        const int w = (row.getWidth() - gap * (PresetLayout::perCategory - 1)) / PresetLayout::perCategory;
-
-        for (auto& s : slotButtons)
-        {
-            s.setBounds (row.removeFromLeft (w));
-            row.removeFromLeft (gap);
-        }
-    }
+    prevButton.setBounds (row.removeFromLeft (36));
+    row.removeFromLeft (6);
+    nextButton.setBounds (row.removeFromRight (36));
+    row.removeFromRight (6);
+    presetDisplay.setBounds (row);
 
     //--------------------------------------------------------------------------
     // Filas de paneles

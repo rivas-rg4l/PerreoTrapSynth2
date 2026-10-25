@@ -2,6 +2,8 @@
 
 #include <array>
 #include <atomic>
+#include <utility>
+#include <vector>
 #include <cmath>
 #include <juce_audio_processors/juce_audio_processors.h>
 
@@ -91,6 +93,22 @@ private:
 };
 
 //==============================================================================
+// Librerias (packs) de presets del usuario
+//==============================================================================
+struct LibraryPreset
+{
+    juce::String name;
+    juce::String category;                                  // puede estar vacia
+    std::vector<std::pair<juce::String, float>> values;     // (idParametro, valor)
+};
+
+struct PresetLibrary
+{
+    juce::String name;
+    std::vector<LibraryPreset> presets;
+};
+
+//==============================================================================
 // Procesador principal
 //==============================================================================
 class PerreoTrapSynthAudioProcessor : public juce::AudioProcessor
@@ -128,10 +146,25 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
-    // Importar / exportar presets como archivos .ptspreset (XML)
-    bool exportPresetToFile (const juce::File& file, const juce::String& presetName);
-    bool importPresetFromFile (const juce::File& file);
-    juce::String getCustomPresetName() const { return customPresetName; }
+    //--------------------------------------------------------------------------
+    // Librerias / packs (.ptspack).  La libreria 0 siempre es "USER".
+    //--------------------------------------------------------------------------
+    const std::vector<PresetLibrary>& getLibraries() const { return libraries; }
+
+    // Vacios si el sonido actual viene de los presets de fabrica
+    juce::String getCustomPresetName() const  { return customPresetName; }
+    juce::String getCustomLibraryName() const { return customLibName; }
+
+    void loadLibraryPreset (int libIndex, int presetIndex);
+    bool saveCurrentSoundToUser (const juce::String& name, const juce::String& category);
+    void removeLibrary (int libIndex);
+
+    // Packs
+    std::vector<LibraryPreset> collectLibrary (int libIndex) const;
+    std::vector<LibraryPreset> collectFactory (int genre) const;   // genre = -1 -> todos
+    bool exportPack (const juce::File& file, const juce::String& packName,
+                     const std::vector<LibraryPreset>& presets) const;
+    int  importPack (const juce::File& file, juce::String& packNameOut);   // devuelve n de presets (0 = error)
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -139,6 +172,10 @@ public:
 
 private:
     void applyPreset (int index);
+    void applyValues (const std::vector<std::pair<juce::String, float>>& values);
+    LibraryPreset captureCurrentSound (const juce::String& name, const juce::String& category) const;
+    void loadLibrariesFromDisk();
+    void saveLibraryToDisk (int libIndex) const;
     void setParameterValue (const juce::String& paramID, float realValue);
     void resetParameterToDefault (const juce::String& paramID);
 
@@ -163,7 +200,9 @@ private:
     std::atomic<float> *dlyOn, *dlyTime, *dlyFb, *dlyMix, *revOn, *revSize, *revMix, *master;
 
     std::atomic<int> currentPreset { 0 };
-    juce::String customPresetName; // nombre del preset importado (vacio si se usa uno interno)
+    juce::String customPresetName; // nombre del preset de libreria (vacio si se usa uno de fabrica)
+    juce::String customLibName;    // libreria a la que pertenece
+    std::vector<PresetLibrary> libraries;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PerreoTrapSynthAudioProcessor)
 };

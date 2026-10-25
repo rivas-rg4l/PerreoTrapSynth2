@@ -7,18 +7,19 @@
 //==============================================================================
 namespace NeonColours
 {
-    inline const juce::Colour bgTop      { (juce::uint32) 0xff0a0714 };
-    inline const juce::Colour bgBottom   { (juce::uint32) 0xff05040b };
-    inline const juce::Colour panel      { (juce::uint32) 0xff120d20 };
-    inline const juce::Colour panelDeep  { (juce::uint32) 0xff0a0714 };
+    // Paleta sobria: grafito + azul acero, con acentos apagados por funcion
+    inline const juce::Colour bgTop      { (juce::uint32) 0xff171a20 };
+    inline const juce::Colour bgBottom   { (juce::uint32) 0xff0f1116 };
+    inline const juce::Colour panel      { (juce::uint32) 0xff1d2128 };
+    inline const juce::Colour panelDeep  { (juce::uint32) 0xff13161b };
 
-    inline const juce::Colour magenta    { (juce::uint32) 0xffff2bd6 };
-    inline const juce::Colour cyan       { (juce::uint32) 0xff19f0ff };
-    inline const juce::Colour violet     { (juce::uint32) 0xff9d5cff };
-    inline const juce::Colour lime       { (juce::uint32) 0xffb6ff3b };
-    inline const juce::Colour orange     { (juce::uint32) 0xffff8a1f };
+    inline const juce::Colour magenta    { (juce::uint32) 0xff5b8fc9 };   // azul acero  (osc A / delay / amp)
+    inline const juce::Colour cyan       { (juce::uint32) 0xff4fb3bf };   // turquesa    (osc B / filtro / chorus)
+    inline const juce::Colour violet     { (juce::uint32) 0xff8a94b8 };   // gris azulado (unison / mezcla / reverb)
+    inline const juce::Colour lime       { (juce::uint32) 0xff7fae8b };   // verde salvia (LFO / salida)
+    inline const juce::Colour orange     { (juce::uint32) 0xffd0a054 };   // ambar        (pitch / drive)
 
-    inline const juce::Colour textDim    { (juce::uint32) 0xff9a93b8 };
+    inline const juce::Colour textDim    { (juce::uint32) 0xff8b93a3 };
 }
 
 //==============================================================================
@@ -90,7 +91,7 @@ private:
 class NeonPanel : public juce::Component
 {
 public:
-    NeonPanel (const juce::String& title, juce::Colour accent);
+    NeonPanel (const juce::String& title, juce::Colour accent, const juce::String& subtitle = {});
 
     // weight = ancho relativo dentro del panel
     void addControl (juce::Component& c, float weight = 1.0f);
@@ -105,7 +106,7 @@ public:
 private:
     struct Item { juce::Component* comp; float weight; };
 
-    juce::String title;
+    juce::String title, subtitle;
     juce::Colour accent;
     std::vector<Item> items;
     float totalWeight = 0.0f;
@@ -114,6 +115,27 @@ private:
     std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> powerAttachment;
     bool hasPower = false;
     bool lastPowerState = true;
+};
+
+//==============================================================================
+// Visor del preset actual: muestra solo el seleccionado; al hacer click
+// el editor abre el menu completo.
+//==============================================================================
+class PresetDisplay : public juce::Component
+{
+public:
+    std::function<void()> onClick;
+
+    void setText (const juce::String& pathText, const juce::String& nameText);
+
+    void paint (juce::Graphics&) override;
+    void mouseUp (const juce::MouseEvent&) override;
+    void mouseEnter (const juce::MouseEvent&) override { hover = true;  repaint(); }
+    void mouseExit  (const juce::MouseEvent&) override { hover = false; repaint(); }
+
+private:
+    juce::String path, name;
+    bool hover = false;
 };
 
 //==============================================================================
@@ -132,29 +154,28 @@ public:
 private:
     void timerCallback() override;
 
-    void loadPreset (int genre, int category, int slot);
     void syncBrowser();
-    void importPreset();
-    void exportPreset();
+    void showPresetMenu();
+    void stepPreset (int direction);
+    void saveToUser();
+    void importPack();
+    void exportPackMenu();
+    void doExport (const juce::String& packName, std::vector<LibraryPreset> presets);
 
     KnobComp&  addKnob  (NeonPanel& panel, const juce::String& id, const juce::String& name, juce::Colour accent);
     ComboComp& addCombo (NeonPanel& panel, const juce::String& id, const juce::String& name, juce::Colour accent);
-    NeonPanel& addPanel (const juce::String& title, juce::Colour accent, int row);
+    NeonPanel& addPanel (const juce::String& title, juce::Colour accent, int row, const juce::String& subtitle = {});
 
     PerreoTrapSynthAudioProcessor& processorRef;
     NeonLookAndFeel neonLookAndFeel;
 
     // ---- Navegador de presets ----
-    std::array<juce::TextButton, PresetLayout::numGenres>     genreButtons;
-    std::array<juce::TextButton, PresetLayout::numCategories> categoryButtons;
-    std::array<juce::TextButton, PresetLayout::perCategory>   slotButtons;
+    PresetDisplay presetDisplay;
     juce::TextButton prevButton { "<" }, nextButton { ">" };
-    juce::TextButton importButton { "IMPORT" }, exportButton { "EXPORT" };
-    juce::Label presetNameLabel;
+    juce::TextButton saveButton { "SAVE" }, importButton { "IMPORT PACK" }, exportButton { "EXPORT PACK" };
     std::unique_ptr<juce::FileChooser> fileChooser;
 
-    int shownGenre = -1, shownCategory = -1;
-    juce::String shownName;
+    juce::String shownPath, shownName;
 
     // ---- Paneles y controles ----
     static constexpr int numRows = 4;
