@@ -52,6 +52,8 @@ private:
     void timerCallback() override;
     void setupKnob (juce::Slider& slider, juce::Label& label, const juce::String& text, juce::Colour accent);
     void updateActivePresetLabel (int presetIndex);
+    void importPreset();
+    void exportPreset();
 
     PerreoTrapSynthAudioProcessor& processorRef;
 
@@ -60,6 +62,9 @@ private:
     juce::Label presetTitleLabel;
     juce::ComboBox presetBox;
     juce::Label activePresetLabel;
+    juce::TextButton importButton { "IMPORT" };
+    juce::TextButton exportButton { "EXPORT" };
+    std::unique_ptr<juce::FileChooser> fileChooser;
 
     juce::Label waveTitleLabel;
     juce::ComboBox waveBox;

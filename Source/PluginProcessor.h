@@ -113,6 +113,11 @@ public:
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
 
+    // Importar / exportar presets como archivos .ptspreset (XML)
+    bool exportPresetToFile (const juce::File& file, const juce::String& presetName);
+    bool importPresetFromFile (const juce::File& file);
+    juce::String getCustomPresetName() const { return customPresetName; }
+
     static const std::array<PerreoPreset, numPresets>& getPresetTable();
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
@@ -130,6 +135,7 @@ private:
     std::atomic<float>* masterParam = nullptr;
 
     std::atomic<int> currentPreset { 0 };
+    juce::String customPresetName; // nombre del preset importado (vacio si se usa uno interno)
     float lastMaster = 0.7f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PerreoTrapSynthAudioProcessor)

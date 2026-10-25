@@ -436,6 +436,7 @@ void PerreoTrapSynthAudioProcessor::applyPreset (int index)
 {
     index = juce::jlimit (0, numPresets - 1, index);
     currentPreset.store (index);
+    customPresetName = juce::String();
 
     const auto& preset = getPresetTable()[(size_t) index];
 
@@ -468,12 +469,67 @@ void PerreoTrapSynthAudioProcessor::changeProgramName (int, const juce::String&)
 }
 
 //==============================================================================
+// Importar / exportar presets (.ptspreset = XML)
+//==============================================================================
+static const char* const kPresetParamIDs[] = { "oscWave", "cutoff", "resonance", "drive", "reverb", "masterVol" };
+
+bool PerreoTrapSynthAudioProcessor::exportPresetToFile (const juce::File& file, const juce::String& presetName)
+{
+    juce::XmlElement xml ("PerreoTrapSynthPreset");
+    xml.setAttribute ("version", 1);
+    xml.setAttribute ("name", presetName);
+
+    for (const char* id : kPresetParamIDs)
+    {
+        if (auto* raw = apvts.getRawParameterValue (id))
+            xml.setAttribute (id, (double) raw->load());
+    }
+
+    return xml.writeTo (file);
+}
+
+bool PerreoTrapSynthAudioProcessor::importPresetFromFile (const juce::File& file)
+{
+    auto xml = juce::XmlDocument::parse (file);
+
+    if (xml == nullptr || ! xml->hasTagName ("PerreoTrapSynthPreset"))
+        return false;
+
+    int applied = 0;
+
+    for (const char* id : kPresetParamIDs)
+    {
+        if (! xml->hasAttribute (id))
+            continue;
+
+        if (auto* param = apvts.getParameter (id))
+        {
+            const auto range = param->getNormalisableRange();
+            const float value = juce::jlimit (range.start, range.end, (float) xml->getDoubleAttribute (id));
+            setParameterValue (id, value);
+            ++applied;
+        }
+    }
+
+    if (applied == 0)
+        return false;
+
+    customPresetName = xml->getStringAttribute ("name", file.getFileNameWithoutExtension());
+
+    if (customPresetName.isEmpty())
+        customPresetName = file.getFileNameWithoutExtension();
+
+    return true;
+}
+
+//==============================================================================
 // Estado
 //==============================================================================
 void PerreoTrapSynthAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
     auto state = apvts.copyState();
     state.setProperty ("presetIndex", currentPreset.load(), nullptr);
+    state.setProperty ("customPresetName", customPresetName, nullptr);
 
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
@@ -487,6 +543,7 @@ void PerreoTrapSynthAudioProcessor::setStateInformation (const void* data, int s
         {
             auto tree = juce::ValueTree::fromXml (*xml);
             currentPreset.store (juce::jlimit (0, numPresets - 1, (int) tree.getProperty ("presetIndex", 0)));
+            customPresetName = tree.getProperty ("customPresetName", juce::String()).toString();
             apvts.replaceState (tree);
         }
     }

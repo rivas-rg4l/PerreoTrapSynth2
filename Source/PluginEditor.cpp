@@ -23,6 +23,11 @@ NeonLookAndFeel::NeonLookAndFeel()
     setColour (juce::Slider::textBoxHighlightColourId,  magenta.withAlpha (0.5f));
 
     setColour (juce::Label::textColourId, juce::Colours::white);
+
+    setColour (juce::TextButton::buttonColourId,  panel);
+    setColour (juce::TextButton::buttonOnColourId, magenta.withAlpha (0.6f));
+    setColour (juce::TextButton::textColourOffId, cyan);
+    setColour (juce::TextButton::textColourOnId,  juce::Colours::white);
 }
 
 void NeonLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
@@ -162,6 +167,11 @@ PerreoTrapSynthAudioProcessorEditor::PerreoTrapSynthAudioProcessorEditor (Perreo
     addAndMakeVisible (activePresetLabel);
     updateActivePresetLabel (processorRef.getCurrentProgram());
 
+    importButton.onClick = [this] { importPreset(); };
+    exportButton.onClick = [this] { exportPreset(); };
+    addAndMakeVisible (importButton);
+    addAndMakeVisible (exportButton);
+
     // Selector de onda
     waveTitleLabel.setText ("WAVE", juce::dontSendNotification);
     waveTitleLabel.setFont (smallBold);
@@ -217,10 +227,84 @@ void PerreoTrapSynthAudioProcessorEditor::setupKnob (juce::Slider& slider, juce:
 
 void PerreoTrapSynthAudioProcessorEditor::updateActivePresetLabel (int presetIndex)
 {
-    const juce::String text = "ACTIVE PRESET:  " + processorRef.getProgramName (presetIndex);
+    const juce::String custom = processorRef.getCustomPresetName();
+
+    const juce::String text = custom.isNotEmpty()
+                                ? "IMPORTED PRESET:  " + custom
+                                : "ACTIVE PRESET:  " + processorRef.getProgramName (presetIndex);
 
     if (activePresetLabel.getText() != text)
         activePresetLabel.setText (text, juce::dontSendNotification);
+}
+
+void PerreoTrapSynthAudioProcessorEditor::importPreset()
+{
+    fileChooser = std::make_unique<juce::FileChooser> (
+        "Importar preset",
+        juce::File::getSpecialLocation (juce::File::userDocumentsDirectory),
+        "*.ptspreset");
+
+    juce::Component::SafePointer<PerreoTrapSynthAudioProcessorEditor> safeThis (this);
+
+    fileChooser->launchAsync (juce::FileBrowserComponent::openMode | juce::FileBrowserComponent::canSelectFiles,
+                              [safeThis] (const juce::FileChooser& chooser)
+    {
+        if (safeThis == nullptr)
+            return;
+
+        const auto file = chooser.getResult();
+
+        if (! file.existsAsFile())
+            return;
+
+        if (! safeThis->processorRef.importPresetFromFile (file))
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                    "Importar preset",
+                                                    "El archivo no es un preset valido de PerreoTrapSynth.");
+            return;
+        }
+
+        safeThis->updateActivePresetLabel (safeThis->processorRef.getCurrentProgram());
+    });
+}
+
+void PerreoTrapSynthAudioProcessorEditor::exportPreset()
+{
+    const juce::String custom = processorRef.getCustomPresetName();
+    const juce::String presetName = custom.isNotEmpty() ? custom
+                                                        : processorRef.getProgramName (processorRef.getCurrentProgram());
+
+    const auto defaultFile = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                                 .getChildFile (juce::File::createLegalFileName (presetName) + ".ptspreset");
+
+    fileChooser = std::make_unique<juce::FileChooser> ("Exportar preset", defaultFile, "*.ptspreset");
+
+    juce::Component::SafePointer<PerreoTrapSynthAudioProcessorEditor> safeThis (this);
+
+    fileChooser->launchAsync (juce::FileBrowserComponent::saveMode
+                                  | juce::FileBrowserComponent::canSelectFiles
+                                  | juce::FileBrowserComponent::warnAboutOverwriting,
+                              [safeThis, presetName] (const juce::FileChooser& chooser)
+    {
+        if (safeThis == nullptr)
+            return;
+
+        auto file = chooser.getResult();
+
+        if (file == juce::File())
+            return;
+
+        if (! file.hasFileExtension ("ptspreset"))
+            file = juce::File (file.getFullPathName() + ".ptspreset");
+
+        if (! safeThis->processorRef.exportPresetToFile (file, presetName))
+        {
+            juce::AlertWindow::showMessageBoxAsync (juce::MessageBoxIconType::WarningIcon,
+                                                    "Exportar preset",
+                                                    "No se pudo guardar el archivo.");
+        }
+    });
 }
 
 void PerreoTrapSynthAudioProcessorEditor::timerCallback()
@@ -310,7 +394,10 @@ void PerreoTrapSynthAudioProcessorEditor::resized()
     presetBox.setBounds (presetRow);
 
     area.removeFromTop (8);
-    activePresetLabel.setBounds (area.removeFromTop (28));
+    auto activeRow = area.removeFromTop (28);
+    importButton.setBounds (activeRow.removeFromLeft (96));
+    exportButton.setBounds (activeRow.removeFromRight (96));
+    activePresetLabel.setBounds (activeRow);
     area.removeFromTop (12);
 
     // Panel de knobs
