@@ -133,7 +133,15 @@ PerreoTrapSynthAudioProcessorEditor::PerreoTrapSynthAudioProcessorEditor (Perreo
     addAndMakeVisible (presetTitleLabel);
 
     for (int i = 0; i < PerreoTrapSynthAudioProcessor::numPresets; ++i)
+    {
+        if (i == 10)
+        {
+            presetBox.addSeparator();
+            presetBox.addSectionHeading ("EXTRA PRESETS");
+        }
+
         presetBox.addItem (processorRef.getProgramName (i), i + 1);
+    }
 
     presetBox.setSelectedItemIndex (processorRef.getCurrentProgram(), juce::dontSendNotification);
     presetBox.onChange = [this]

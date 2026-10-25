@@ -84,7 +84,7 @@ private:
 class PerreoTrapSynthAudioProcessor : public juce::AudioProcessor
 {
 public:
-    static constexpr int numPresets = 10;
+    static constexpr int numPresets = 43;
 
     PerreoTrapSynthAudioProcessor();
     ~PerreoTrapSynthAudioProcessor() override;

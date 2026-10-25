@@ -219,7 +219,50 @@ PerreoTrapSynthAudioProcessor::getPresetTable()
         { "[Choir] Epic Reggaeton Choir",             3, 1400.0f, 2.0f,   0.3f, 0.70f, 0.70f },
         { "[Orchestral] Electro Flow Strings",        1, 4200.0f, 0.9f,   0.4f, 0.45f, 0.70f },
         { "[Orchestral] Dark Trap Brass & Strings",   1, 1500.0f, 3.0f,   2.5f, 0.40f, 0.70f },
-        { "[Sub] 808 Heavy Distortion",               0,  600.0f, 0.707f, 8.0f, 0.05f, 0.70f }
+        { "[Sub] 808 Heavy Distortion",               0,  600.0f, 0.707f, 8.0f, 0.05f, 0.70f },
+
+        // ---- Presets extra (10 en adelante) ----
+        // Lead
+        { "[Lead] Neon Perreo Lead",                  1, 7500.0f, 1.8f,   2.0f, 0.25f, 0.70f },
+        { "[Lead] Sunset Trap Lead",                  3, 5200.0f, 1.0f,   1.2f, 0.35f, 0.72f },
+        { "[Lead] Hard Reggaeton Screamer",           2, 9000.0f, 3.5f,   6.0f, 0.15f, 0.62f },
+        { "[Lead] Club Siren Lead",                   1, 10000.0f, 6.0f,  4.0f, 0.30f, 0.62f },
+        { "[Lead] Romantico Soft Lead",               0, 4500.0f, 0.8f,   0.2f, 0.40f, 0.75f },
+        // Pluck
+        { "[Pluck] Bubble Pluck",                     0, 2600.0f, 3.0f,   1.0f, 0.20f, 0.75f },
+        { "[Pluck] Glass Marimba Pluck",              3, 3800.0f, 2.2f,   0.5f, 0.30f, 0.75f },
+        { "[Pluck] Latin Trap Pluck",                 2, 1800.0f, 5.0f,   2.5f, 0.20f, 0.68f },
+        { "[Pluck] Digital Kalimba",                  0, 5200.0f, 1.5f,   0.3f, 0.35f, 0.75f },
+        { "[Pluck] Dark Harp Pluck",                  3, 1600.0f, 2.8f,   1.5f, 0.45f, 0.72f },
+        // Keys
+        { "[Keys] Rhodes Nocturno",                   3, 2400.0f, 0.9f,   1.0f, 0.40f, 0.75f },
+        { "[Keys] Bell Keys",                         0, 6500.0f, 2.0f,   0.2f, 0.50f, 0.72f },
+        { "[Keys] Lo-Fi Perreo Keys",                 3, 1500.0f, 1.5f,   1.8f, 0.30f, 0.75f },
+        { "[Keys] Crystal Celesta",                   0, 8000.0f, 1.2f,   0.0f, 0.55f, 0.72f },
+        // Synth
+        { "[Synth] Retro Wave Synth",                 1, 3600.0f, 2.5f,   1.5f, 0.30f, 0.70f },
+        { "[Synth] Hyperpop Synth",                   2, 12000.0f, 1.5f,  3.5f, 0.20f, 0.65f },
+        { "[Synth] Future Funk Synth",                1, 2200.0f, 4.0f,   1.2f, 0.25f, 0.70f },
+        { "[Synth] Acid Perreo Synth",                1, 1200.0f, 8.0f,   3.0f, 0.10f, 0.62f },
+        // Pad
+        { "[Pad] Night Drive Pad",                    1, 1300.0f, 1.4f,   0.2f, 0.70f, 0.65f },
+        { "[Pad] Warm Analog Pad",                    3, 2000.0f, 0.9f,   0.5f, 0.55f, 0.70f },
+        { "[Pad] Glass Cathedral Pad",                0, 3000.0f, 1.0f,   0.0f, 0.90f, 0.65f },
+        { "[Pad] Dark Ambient Pad",                   1,  800.0f, 1.8f,   0.8f, 0.80f, 0.62f },
+        // Choir
+        { "[Choir] Angelic Ooh Choir",                0, 2800.0f, 1.0f,   0.0f, 0.80f, 0.70f },
+        { "[Choir] Dark Gregorian Choir",             3, 1000.0f, 2.5f,   0.6f, 0.85f, 0.68f },
+        // Orchestral
+        { "[Orchestral] Cinematic Strings",           1, 3200.0f, 0.8f,   0.2f, 0.60f, 0.70f },
+        { "[Orchestral] Epic Brass Hit",              1, 2600.0f, 2.0f,   1.8f, 0.35f, 0.65f },
+        { "[Orchestral] Pizzicato Perreo Strings",    3, 4000.0f, 1.6f,   0.4f, 0.25f, 0.75f },
+        { "[Orchestral] Horror Strings",              1, 1800.0f, 6.0f,   2.0f, 0.70f, 0.60f },
+        // Sub / Bass
+        { "[Sub] Clean 808 Sub",                      0,  400.0f, 0.707f, 0.0f, 0.00f, 0.80f },
+        { "[Sub] Long 808 Glide Sub",                 0,  500.0f, 1.0f,   3.0f, 0.05f, 0.75f },
+        { "[Sub] Dembow Sub Bass",                    3,  300.0f, 1.0f,   1.5f, 0.00f, 0.78f },
+        { "[Sub] Reese Trap Bass",                    1,  700.0f, 3.0f,   4.0f, 0.05f, 0.65f },
+        { "[Sub] Growl Bass Square",                  2,  900.0f, 4.5f,   6.5f, 0.05f, 0.60f }
     }};
 
     return table;
