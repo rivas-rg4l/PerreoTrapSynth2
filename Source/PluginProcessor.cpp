@@ -1,5 +1,7 @@
 #include "PluginProcessor.h"
 #include <algorithm>
+#include <functional>
+#include <memory>
 #include "PluginEditor.h"
 
 //==============================================================================
@@ -1032,7 +1034,9 @@ std::vector<LibraryPreset> PerreoTrapSynthAudioProcessor::collectFactory (int ge
             if (withID == nullptr)
                 continue;
 
-            float value = param->convertFrom0to1 (param->getDefaultValue());
+            // convertFrom0to1 existe en RangedAudioParameter, no en AudioProcessorParameter
+            auto* ranged = apvts.getParameter (withID->paramID);
+            float value  = ranged != nullptr ? ranged->convertFrom0to1 (ranged->getDefaultValue()) : 0.0f;
 
             for (const auto& kv : table[(size_t) i].values)
                 if (withID->paramID == kv.first)

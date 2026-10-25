@@ -1,5 +1,9 @@
 #pragma once
 
+#include <array>
+#include <functional>
+#include <memory>
+#include <vector>
 #include "PluginProcessor.h"
 
 //==============================================================================
