@@ -9,7 +9,7 @@ on:
 jobs:
   build-windows:
     name: Windows MSVC (VS 2022) - Release
-    runs-on: windows-latest
+    runs-on: windows-2022
 
     steps:
       - name: Checkout
