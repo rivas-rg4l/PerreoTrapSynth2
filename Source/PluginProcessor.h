@@ -5,18 +5,24 @@
 #include <cmath>
 #include <juce_audio_processors/juce_audio_processors.h>
 
+#include "Effects.h"
+#include "Presets.h"
+
 //==============================================================================
-// Definicion de un preset nativo
+// Punteros directos a los parametros (lectura lock-free desde el audio thread)
 //==============================================================================
-struct PerreoPreset
+struct SynthParams
 {
-    const char* name;
-    int         wave;       // 0 Sine, 1 Saw, 2 Square, 3 Triangle
-    float       cutoff;     // Hz
-    float       resonance;  // Q
-    float       drive;      // 0..10
-    float       reverb;     // 0..1
-    float       master;     // 0..1
+    explicit SynthParams (juce::AudioProcessorValueTreeState& apvts);
+
+    std::atomic<float> *aWave, *aOct, *aSemi, *aFine, *aLvl;
+    std::atomic<float> *bWave, *bOct, *bSemi, *bFine, *bLvl;
+    std::atomic<float> *uniVoices, *uniDetune, *uniSpread;
+    std::atomic<float> *pw, *subLvl, *noiseLvl;
+    std::atomic<float> *fltType, *cutoff, *reso, *fltEnv, *fA, *fD, *fS, *fR;
+    std::atomic<float> *aA, *aD, *aS, *aR;
+    std::atomic<float> *lfoShape, *lfoDest, *lfoRate, *lfoDepth;
+    std::atomic<float> *pitEnv, *pitDec;
 };
 
 //==============================================================================
@@ -32,7 +38,9 @@ public:
 class SynthVoice : public juce::SynthesiserVoice
 {
 public:
-    explicit SynthVoice (juce::AudioProcessorValueTreeState& apvts);
+    static constexpr int maxUnison = 7;
+
+    explicit SynthVoice (const SynthParams& params);
 
     bool canPlaySound (juce::SynthesiserSound* sound) override;
     void startNote (int midiNoteNumber, float velocity,
@@ -44,36 +52,40 @@ public:
     void renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int startSample, int numSamples) override;
 
 private:
-    static float generateSample (int wave, float phase, float dt) noexcept;
+    struct Svf
+    {
+        float ic1 = 0.0f, ic2 = 0.0f;
+        void reset() { ic1 = ic2 = 0.0f; }
+    };
+
     static float polyBlep (float t, float dt) noexcept;
-    void updatePitchBend (int pitchWheelPosition) noexcept;
+    static float oscSample (int wave, float phase, float dt, float pulseWidth) noexcept;
+    float lfoSample (int shape, float increment) noexcept;
+    float filterProcess (Svf& s, float in, int type) const noexcept;
     void updateFilterCoefficients (float cutoffHz) noexcept;
+    void updatePitchBend (int pitchWheelPosition) noexcept;
 
-    std::atomic<float>* waveParam      = nullptr;
-    std::atomic<float>* cutoffParam    = nullptr;
-    std::atomic<float>* resonanceParam = nullptr;
-    std::atomic<float>* driveParam     = nullptr;
+    const SynthParams& p;
 
-    juce::ADSR adsr;
+    juce::ADSR ampEnv, fltEnvGen;
+    juce::Random random;
 
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Multiplicative> cutoffSmoothed { 8000.0f };
-    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear>         driveSmoothed  { 0.0f };
 
-    double sampleRateHz   = 44100.0;
-    float  baseFrequency  = 440.0f;
-    float  bendRatio      = 1.0f;
-    float  level          = 0.0f;
-    float  phase1         = 0.0f;
-    float  phase2         = 0.0f;
+    double sampleRateHz  = 44100.0;
+    float  baseFrequency = 440.0f;
+    float  bendRatio     = 1.0f;
+    float  velocityGain  = 0.0f;
 
-    // Filtro SVF (TPT, Zavalishin) pasa-bajos
-    float g  = 0.0f;
-    float k  = 1.0f;
-    float a1 = 0.0f;
-    float a2 = 0.0f;
-    float a3 = 0.0f;
-    float ic1eq = 0.0f;
-    float ic2eq = 0.0f;
+    std::array<float, maxUnison> phaseA {}, phaseB {};
+    float subPhase = 0.0f;
+
+    float lfoPhase = 0.0f, lfoHold = 0.0f;
+    float pitchEnvValue = 1.0f;
+
+    // Filtro SVF (TPT) estereo
+    Svf filtL, filtR;
+    float g = 0.0f, k = 1.0f, a1 = 0.0f, a2 = 0.0f, a3 = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (SynthVoice)
 };
@@ -84,7 +96,7 @@ private:
 class PerreoTrapSynthAudioProcessor : public juce::AudioProcessor
 {
 public:
-    static constexpr int numPresets = 43;
+    static constexpr int numPresets = PresetLayout::total;
 
     PerreoTrapSynthAudioProcessor();
     ~PerreoTrapSynthAudioProcessor() override;
@@ -101,7 +113,7 @@ public:
     bool acceptsMidi() const override  { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 3.0; }
+    double getTailLengthSeconds() const override { return 4.0; }
 
     // Programas = presets
     int getNumPrograms() override { return numPresets; }
@@ -109,6 +121,9 @@ public:
     void setCurrentProgram (int index) override;
     const juce::String getProgramName (int index) override;
     void changeProgramName (int index, const juce::String& newName) override;
+
+    // Nombre corto (solo el nombre del preset, sin genero/categoria)
+    juce::String getPresetShortName (int index) const;
 
     void getStateInformation (juce::MemoryBlock& destData) override;
     void setStateInformation (const void* data, int sizeInBytes) override;
@@ -118,7 +133,6 @@ public:
     bool importPresetFromFile (const juce::File& file);
     juce::String getCustomPresetName() const { return customPresetName; }
 
-    static const std::array<PerreoPreset, numPresets>& getPresetTable();
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
     juce::AudioProcessorValueTreeState apvts;
@@ -126,17 +140,30 @@ public:
 private:
     void applyPreset (int index);
     void setParameterValue (const juce::String& paramID, float realValue);
+    void resetParameterToDefault (const juce::String& paramID);
 
+    SynthParams synthParams;
     juce::Synthesiser synth;
+
+    // Efectos
     juce::Reverb reverb;
     juce::Reverb::Parameters reverbParams;
+    juce::AudioBuffer<float> reverbScratch;
+    juce::AudioBuffer<float> monoRight;
+    bool reverbActive = false;
+    SimpleChorus chorus;
+    PingPongDelay delay;
 
-    std::atomic<float>* reverbParam = nullptr;
-    std::atomic<float>* masterParam = nullptr;
+    juce::SmoothedValue<float> driveMixSm { 0.0f };
+    juce::SmoothedValue<float> driveAmtSm { 0.0f };
+    juce::SmoothedValue<float> reverbMixSm { 0.0f };
+    juce::SmoothedValue<float> masterSm { 0.7f };
+
+    std::atomic<float> *drvOn, *drive, *choOn, *choRate, *choDepth, *choMix;
+    std::atomic<float> *dlyOn, *dlyTime, *dlyFb, *dlyMix, *revOn, *revSize, *revMix, *master;
 
     std::atomic<int> currentPreset { 0 };
     juce::String customPresetName; // nombre del preset importado (vacio si se usa uno interno)
-    float lastMaster = 0.7f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PerreoTrapSynthAudioProcessor)
 };

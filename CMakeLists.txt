@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(PerreoTrapSynth VERSION 1.0.0 LANGUAGES C CXX)
+project(PerreoTrapSynth VERSION 2.0.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -37,6 +37,9 @@ target_sources(PerreoTrapSynth
         Source/PluginProcessor.h
         Source/PluginEditor.cpp
         Source/PluginEditor.h
+        Source/Effects.h
+        Source/Presets.cpp
+        Source/Presets.h
 )
 
 target_compile_definitions(PerreoTrapSynth
