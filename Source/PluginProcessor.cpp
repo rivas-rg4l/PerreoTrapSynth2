@@ -1089,8 +1089,7 @@ std::vector<LibraryPreset> PerreoTrapSynthAudioProcessor::collectFactory (int ge
             if (withID == nullptr)
                 continue;
 
-            float value = param->convertFrom0to1 (param->getDefaultValue());
-
+            float value = apvts.getParameterRange (withID->paramID).convertFrom0to1 (param->getDefaultValue());
             for (const auto& kv : table[(size_t) i].values)
                 if (withID->paramID == kv.first)
                     value = kv.second;
