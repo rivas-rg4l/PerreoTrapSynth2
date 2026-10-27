@@ -38,6 +38,7 @@ target_sources(PerreoTrapSynth
         Source/PluginEditor.cpp
         Source/PluginEditor.h
         Source/Effects.h
+        Source/Waves.h
         Source/Presets.cpp
         Source/Presets.h
 )

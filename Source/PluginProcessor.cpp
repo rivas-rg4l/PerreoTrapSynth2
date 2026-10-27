@@ -1,7 +1,5 @@
 #include "PluginProcessor.h"
 #include <algorithm>
-#include <functional>
-#include <memory>
 #include "PluginEditor.h"
 
 //==============================================================================
@@ -20,6 +18,7 @@ SynthParams::SynthParams (juce::AudioProcessorValueTreeState& s)
     aA = get ("aA"); aD = get ("aD"); aS = get ("aS"); aR = get ("aR");
     lfoShape = get ("lfoShape"); lfoDest = get ("lfoDest"); lfoRate = get ("lfoRate"); lfoDepth = get ("lfoDepth");
     pitEnv = get ("pitEnv"); pitDec = get ("pitDec");
+    glide = get ("glide"); fold = get ("fold");
 }
 
 //==============================================================================
@@ -56,6 +55,13 @@ void SynthVoice::startNote (int midiNoteNumber, float velocity,
                             juce::SynthesiserSound*, int currentPitchWheelPosition)
 {
     baseFrequency = (float) juce::MidiMessage::getMidiNoteInHertz (midiNoteNumber);
+
+    // Glide: arranca desde la ultima nota tocada
+    const float lastHz = p.lastNoteHz != nullptr ? p.lastNoteHz->load() : 0.0f;
+    currentFreq = (p.glide->load() > 0.001f && lastHz > 0.0f) ? lastHz : baseFrequency;
+
+    if (p.lastNoteHz != nullptr)
+        p.lastNoteHz->store (baseFrequency);
     updatePitchBend (currentPitchWheelPosition);
     velocityGain = 0.25f + 0.75f * velocity;
 
@@ -122,8 +128,18 @@ float SynthVoice::polyBlep (float t, float dt) noexcept
     return 0.0f;
 }
 
-float SynthVoice::oscSample (int wave, float phase, float dt, float pulseWidth) noexcept
+float SynthVoice::wavefold (float x, float amount) noexcept
 {
+    const float k = 1.0f + amount * 5.0f;
+    return x + amount * (std::sin (k * x * 1.5708f) - x);
+}
+
+float SynthVoice::oscSample (int wave, float phase, float dt, float pulseWidth, const float* custom) noexcept
+{
+    if (wave >= Waves::firstTable)
+        return wave == Waves::customIndex ? Waves::readTable (custom, Waves::tableSize, phase)
+                                          : Waves::sampleBuiltIn (wave, phase);
+
     switch (wave)
     {
         case 0: // Sine
@@ -212,8 +228,11 @@ void SynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int st
     const double sr = sampleRateHz;
 
     // ---- Lectura de parametros (una vez por bloque) ----
-    const int   waveA  = juce::jlimit (0, 4, (int) (p.aWave->load() + 0.5f));
-    const int   waveB  = juce::jlimit (0, 4, (int) (p.bWave->load() + 0.5f));
+    const int   waveA  = juce::jlimit (0, Waves::numWaves - 1, (int) (p.aWave->load() + 0.5f));
+    const int   waveB  = juce::jlimit (0, Waves::numWaves - 1, (int) (p.bWave->load() + 0.5f));
+
+    if (waveA == Waves::customIndex && p.tableA != nullptr) Waves::prepareCustom (*p.tableA, customA);
+    if (waveB == Waves::customIndex && p.tableB != nullptr) Waves::prepareCustom (*p.tableB, customB);
     const float lvlA   = p.aLvl->load();
     const float lvlB   = p.bLvl->load();
     const float ratioA = std::exp2 ((p.aOct->load() * 12.0f + p.aSemi->load() + p.aFine->load() * 0.01f) / 12.0f);
@@ -238,6 +257,9 @@ void SynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int st
     const float subLvl   = p.subLvl->load();
     const float noiseLvl = p.noiseLvl->load();
     const float pwBase   = p.pw->load();
+    const float foldAmt  = p.fold->load();
+    const float glideT   = p.glide->load();
+    const float glideCoef = glideT > 0.001f ? 1.0f - std::exp (-1.0f / (glideT * (float) sr)) : 1.0f;
 
     const int   fType   = juce::jlimit (0, 3, (int) (p.fltType->load() + 0.5f));
     const float fEnvAmt = p.fltEnv->load();
@@ -289,7 +311,8 @@ void SynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int st
             semis += lfoMod * 1.5f;
 
         const float modRatio = (semis != 0.0f) ? std::exp2 (semis / 12.0f) : 1.0f;
-        const float baseDt   = baseFrequency * bendRatio * modRatio / (float) sr;
+        currentFreq += (baseFrequency - currentFreq) * glideCoef;
+        const float baseDt   = currentFreq * bendRatio * modRatio / (float) sr;
 
         const float pwEff = juce::jlimit (0.05f, 0.95f, pwBase + (lfoDest == 4 ? lfoMod * 0.4f : 0.0f));
 
@@ -303,7 +326,7 @@ void SynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int st
 
             {
                 const float dt = juce::jmin (0.45f, baseDt * ratioA * uniRatio[ui]);
-                s += oscSample (waveA, phaseA[ui], dt, pwEff) * lvlA;
+                s += oscSample (waveA, phaseA[ui], dt, pwEff, customA.data()) * lvlA;
                 phaseA[ui] += dt;
                 if (phaseA[ui] >= 1.0f) phaseA[ui] -= 1.0f;
             }
@@ -311,7 +334,7 @@ void SynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int st
             if (lvlB > 0.0005f)
             {
                 const float dt = juce::jmin (0.45f, baseDt * ratioB * uniRatio[ui]);
-                s += oscSample (waveB, phaseB[ui], dt, pwEff) * lvlB;
+                s += oscSample (waveB, phaseB[ui], dt, pwEff, customB.data()) * lvlB;
                 phaseB[ui] += dt;
                 if (phaseB[ui] >= 1.0f) phaseB[ui] -= 1.0f;
             }
@@ -322,6 +345,12 @@ void SynthVoice::renderNextBlock (juce::AudioBuffer<float>& outputBuffer, int st
 
         sumL *= uniGain;
         sumR *= uniGain;
+
+        if (foldAmt > 0.001f)
+        {
+            sumL = wavefold (sumL, foldAmt);
+            sumR = wavefold (sumR, foldAmt);
+        }
 
         // ---- Sub (seno una octava abajo) y ruido ----
         if (subLvl > 0.0005f)
@@ -422,7 +451,10 @@ PerreoTrapSynthAudioProcessor::createParameterLayout()
         layout.add (std::make_unique<juce::AudioParameterBool> (juce::ParameterID { id, 1 }, name, def));
     };
 
-    const juce::StringArray waves { "Sine", "Saw", "Square", "Triangle", "Pulse" };
+    juce::StringArray waves;
+
+    for (int i = 0; i < Waves::numWaves; ++i)
+        waves.add (Waves::waveName (i));
 
     // ---- Oscilador A ----
     addChoice ("aWave", "Osc A Wave", waves, 1);
@@ -471,6 +503,8 @@ PerreoTrapSynthAudioProcessor::createParameterLayout()
     // ---- Pitch envelope ----
     addFloat ("pitEnv", "Pitch Env", -24.0f, 24.0f, 0.0f, 1.0f, semisFmt);
     addFloat ("pitDec", "Pitch Env Time", 0.01f, 1.0f, 0.08f, 0.5f, secs);
+    addFloat ("glide", "Glide", 0.0f, 1.0f, 0.0f, 0.5f, secs);
+    addFloat ("fold",  "Wave Fold", 0.0f, 1.0f, 0.0f, 1.0f, pct);
 
     // ---- FX (cada uno con su interruptor) ----
     addBool  ("drvOn", "Drive On", false);
@@ -512,6 +546,11 @@ PerreoTrapSynthAudioProcessor::PerreoTrapSynthAudioProcessor()
     master = get ("master");
 
     jassert (getPresetTable().size() == (size_t) numPresets);
+
+    Waves::bank();   // precalcula las ondas antes de que arranque el audio
+    synthParams.tableA = &waveTableA;
+    synthParams.tableB = &waveTableB;
+    synthParams.lastNoteHz = &lastNoteHz;
 
     loadLibrariesFromDisk();
 
@@ -812,6 +851,9 @@ namespace
             e->setAttribute ("name", p.name);
             e->setAttribute ("category", p.category);
 
+            if (p.waveA.isNotEmpty()) e->setAttribute ("waveA", p.waveA);
+            if (p.waveB.isNotEmpty()) e->setAttribute ("waveB", p.waveB);
+
             for (const auto& kv : p.values)
                 e->setAttribute (kv.first, (double) kv.second);
         }
@@ -842,6 +884,9 @@ namespace
 
                 if (attr == "name" || attr == "category")
                     continue;
+
+                if (attr == "waveA") { lp.waveA = e->getAttributeValue (i); continue; }
+                if (attr == "waveB") { lp.waveB = e->getAttributeValue (i); continue; }
 
                 lp.values.emplace_back (attr, (float) e->getAttributeValue (i).getDoubleValue());
             }
@@ -936,6 +981,13 @@ LibraryPreset PerreoTrapSynthAudioProcessor::captureCurrentSound (const juce::St
             if (auto* raw = apvts.getRawParameterValue (withID->paramID))
                 lp.values.emplace_back (withID->paramID, raw->load());
 
+    // Si algun oscilador usa la onda dibujada, se guarda con el preset
+    if (auto* wa = apvts.getRawParameterValue ("aWave"); wa != nullptr && (int) (wa->load() + 0.5f) == Waves::customIndex)
+        lp.waveA = encodeWave (0);
+
+    if (auto* wb = apvts.getRawParameterValue ("bWave"); wb != nullptr && (int) (wb->load() + 0.5f) == Waves::customIndex)
+        lp.waveB = encodeWave (1);
+
     return lp;
 }
 
@@ -951,6 +1003,9 @@ void PerreoTrapSynthAudioProcessor::loadLibraryPreset (int libIndex, int presetI
 
     const auto& p = lib.presets[(size_t) presetIndex];
     applyValues (p.values);
+
+    if (p.waveA.isNotEmpty()) decodeWave (0, p.waveA);
+    if (p.waveB.isNotEmpty()) decodeWave (1, p.waveB);
 
     customLibName    = lib.name;
     customPresetName = p.name;
@@ -1034,9 +1089,7 @@ std::vector<LibraryPreset> PerreoTrapSynthAudioProcessor::collectFactory (int ge
             if (withID == nullptr)
                 continue;
 
-            // convertFrom0to1 existe en RangedAudioParameter, no en AudioProcessorParameter
-            auto* ranged = apvts.getParameter (withID->paramID);
-            float value  = ranged != nullptr ? ranged->convertFrom0to1 (ranged->getDefaultValue()) : 0.0f;
+            float value = param->convertFrom0to1 (param->getDefaultValue());
 
             for (const auto& kv : table[(size_t) i].values)
                 if (withID->paramID == kv.first)
@@ -1126,6 +1179,105 @@ int PerreoTrapSynthAudioProcessor::importPack (const juce::File& file, juce::Str
 }
 
 //==============================================================================
+// Ondas editables
+//==============================================================================
+juce::String PerreoTrapSynthAudioProcessor::encodeWave (int osc) const
+{
+    const auto& table = osc == 0 ? waveTableA : waveTableB;
+    std::array<float, Waves::tableSize> t;
+    table.load (t);
+
+    juce::StringArray parts;
+
+    for (float v : t)
+        parts.add (juce::String (juce::roundToInt (v * 1000.0f)));
+
+    return parts.joinIntoString (" ");
+}
+
+void PerreoTrapSynthAudioProcessor::decodeWave (int osc, const juce::String& text)
+{
+    const auto parts = juce::StringArray::fromTokens (text, " ", "");
+
+    if (parts.size() != Waves::tableSize)
+        return;
+
+    std::array<float, Waves::tableSize> t;
+
+    for (int i = 0; i < Waves::tableSize; ++i)
+        t[(size_t) i] = (float) parts[i].getIntValue() / 1000.0f;
+
+    getWaveTable (osc).store (t);
+}
+
+//==============================================================================
+// Sonido aleatorio (para encontrar ideas rapido)
+//==============================================================================
+void PerreoTrapSynthAudioProcessor::randomizeSound()
+{
+    auto r  = [this] (float lo, float hi) { return lo + rng.nextFloat() * (hi - lo); };
+    auto ri = [this] (int lo, int hi)     { return (float) rng.nextInt (juce::Range<int> (lo, hi + 1)); };
+    auto chance = [this] (float p)        { return rng.nextFloat() < p; };
+    auto set = [this] (const char* id, float v) { setParameterValue (id, v); };
+
+    set ("aWave", ri (0, Waves::customIndex - 1));
+    set ("bWave", ri (0, Waves::customIndex - 1));
+    set ("aOct", ri (-1, 0));
+    set ("bOct", ri (-1, 1));
+    set ("aSemi", 0.0f);
+    set ("bSemi", chance (0.5f) ? 0.0f : (chance (0.5f) ? 7.0f : 12.0f));
+    set ("aFine", 0.0f);
+    set ("bFine", r (-15.0f, 15.0f));
+    set ("aLvl", 1.0f);
+    set ("bLvl", chance (0.6f) ? r (0.2f, 0.8f) : 0.0f);
+
+    set ("uniVoices", ri (1, 5));
+    set ("uniDetune", r (0.05f, 0.4f));
+    set ("uniSpread", r (0.3f, 1.0f));
+    set ("pw", r (0.2f, 0.7f));
+    set ("subLvl", chance (0.3f) ? r (0.1f, 0.4f) : 0.0f);
+    set ("noiseLvl", chance (0.25f) ? r (0.02f, 0.15f) : 0.0f);
+
+    set ("fltType", chance (0.8f) ? 0.0f : ri (1, 3));
+    set ("cutoff", r (500.0f, 9000.0f));
+    set ("reso", r (0.7f, 4.0f));
+    set ("fltEnv", r (0.0f, 0.8f));
+    set ("fA", r (0.0f, 0.3f));
+    set ("fD", r (0.1f, 1.2f));
+    set ("fS", r (0.0f, 0.8f));
+    set ("fR", r (0.1f, 1.0f));
+
+    set ("aA", r (0.002f, 0.5f));
+    set ("aD", r (0.1f, 1.5f));
+    set ("aS", r (0.1f, 1.0f));
+    set ("aR", r (0.05f, 1.5f));
+
+    set ("lfoShape", ri (0, 4));
+    set ("lfoDest", ri (0, 4));
+    set ("lfoRate", r (0.2f, 7.0f));
+    set ("lfoDepth", r (0.0f, 0.5f));
+    set ("pitEnv", chance (0.3f) ? r (-5.0f, 5.0f) : 0.0f);
+    set ("pitDec", r (0.02f, 0.3f));
+    set ("fold", chance (0.3f) ? r (0.05f, 0.35f) : 0.0f);
+    set ("glide", 0.0f);
+
+    set ("drvOn", chance (0.25f) ? 1.0f : 0.0f);
+    set ("drive", r (1.0f, 4.0f));
+    set ("choOn", chance (0.5f) ? 1.0f : 0.0f);
+    set ("choMix", r (0.2f, 0.5f));
+    set ("dlyOn", chance (0.5f) ? 1.0f : 0.0f);
+    set ("dlyTime", ri (180, 500));
+    set ("dlyFb", r (0.2f, 0.5f));
+    set ("dlyMix", r (0.1f, 0.35f));
+    set ("revOn", 1.0f);
+    set ("revSize", r (0.3f, 0.9f));
+    set ("revMix", r (0.1f, 0.5f));
+
+    customLibName    = juce::String();
+    customPresetName = "Random Sound";
+}
+
+//==============================================================================
 // Estado
 //==============================================================================
 void PerreoTrapSynthAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
@@ -1134,6 +1286,8 @@ void PerreoTrapSynthAudioProcessor::getStateInformation (juce::MemoryBlock& dest
     state.setProperty ("presetIndex", currentPreset.load(), nullptr);
     state.setProperty ("customPresetName", customPresetName, nullptr);
     state.setProperty ("customLibName", customLibName, nullptr);
+    state.setProperty ("waveA", encodeWave (0), nullptr);
+    state.setProperty ("waveB", encodeWave (1), nullptr);
 
     if (auto xml = state.createXml())
         copyXmlToBinary (*xml, destData);
@@ -1149,6 +1303,8 @@ void PerreoTrapSynthAudioProcessor::setStateInformation (const void* data, int s
             currentPreset.store (juce::jlimit (0, numPresets - 1, (int) tree.getProperty ("presetIndex", 0)));
             customPresetName = tree.getProperty ("customPresetName", juce::String()).toString();
             customLibName    = tree.getProperty ("customLibName", juce::String()).toString();
+            decodeWave (0, tree.getProperty ("waveA", juce::String()).toString());
+            decodeWave (1, tree.getProperty ("waveB", juce::String()).toString());
             apvts.replaceState (tree);
         }
     }

@@ -5,14 +5,14 @@
 #include <vector>
 
 //==============================================================================
-// Organizacion de presets:  2 divisiones x 6 categorias x 9 presets = 108
+// Organizacion de presets:  2 divisiones x 10 categorias x 9 presets = 180
 //
-//   indice = genero * 54 + categoria * 9 + slot
+//   indice = genero * 90 + categoria * 9 + slot
 //==============================================================================
 namespace PresetLayout
 {
     constexpr int numGenres     = 2;
-    constexpr int numCategories = 6;
+    constexpr int numCategories = 10;
     constexpr int perCategory   = 9;
     constexpr int perGenre      = numCategories * perCategory;
     constexpr int total         = numGenres * perGenre;
@@ -25,7 +25,7 @@ namespace PresetLayout
 
     inline const char* categoryName (int c)
     {
-        static const char* const names[] = { "PLUCKS", "LEADS", "PADS", "KEYS", "SYNTHS", "CHOIRS" };
+        static const char* const names[] = { "PLUCKS", "LEADS", "PADS", "KEYS", "SYNTHS", "CHOIRS", "BASS", "BELLS", "ARPS", "FX" };
         return names[c < 0 ? 0 : (c >= numCategories ? numCategories - 1 : c)];
     }
 

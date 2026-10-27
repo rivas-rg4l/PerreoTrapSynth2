@@ -1,9 +1,5 @@
 #pragma once
 
-#include <array>
-#include <functional>
-#include <memory>
-#include <vector>
 #include "PluginProcessor.h"
 
 //==============================================================================
@@ -143,6 +139,43 @@ private:
 };
 
 //==============================================================================
+// Editor de ondas: dibuja con el mouse la onda Custom de cada oscilador
+//==============================================================================
+class WaveEditor : public juce::Component, private juce::Timer
+{
+public:
+    explicit WaveEditor (PerreoTrapSynthAudioProcessor& p);
+    ~WaveEditor() override { stopTimer(); }
+
+    void paint (juce::Graphics&) override;
+    void resized() override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp (const juce::MouseEvent&) override { lastIdx = -1; }
+
+private:
+    void timerCallback() override { if (isShowing()) repaint(); }
+    void selectOsc (int newOsc);
+    int  currentWave() const;
+    juce::String waveParamId() const { return osc == 0 ? "aWave" : "bWave"; }
+    void makeCustom();
+    void applyTool (std::function<void (std::array<float, Waves::tableSize>&)> fn);
+    void drawAt (juce::Point<int> pos);
+
+    PerreoTrapSynthAudioProcessor& proc;
+    int osc = 0;
+    int lastIdx = -1;
+    float lastVal = 0.0f;
+    juce::Rectangle<int> canvas;
+
+    juce::TextButton oscAButton { "OSC A" }, oscBButton { "OSC B" };
+    juce::ComboBox waveBox;
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ComboBoxAttachment> waveAttach;
+    juce::TextButton sineBtn { "SINE" }, sawBtn { "SAW" }, squareBtn { "SQUARE" }, triBtn { "TRIANGLE" },
+                     smoothBtn { "SMOOTH" }, invertBtn { "INVERT" }, randomBtn { "RANDOM" }, mirrorBtn { "MIRROR" };
+};
+
+//==============================================================================
 // Editor
 //==============================================================================
 class PerreoTrapSynthAudioProcessorEditor : public juce::AudioProcessorEditor,
@@ -159,6 +192,7 @@ private:
     void timerCallback() override;
 
     void syncBrowser();
+    void setWaveEditorOpen (bool open);
     void showPresetMenu();
     void stepPreset (int direction);
     void saveToUser();
@@ -177,6 +211,9 @@ private:
     PresetDisplay presetDisplay;
     juce::TextButton prevButton { "<" }, nextButton { ">" };
     juce::TextButton saveButton { "SAVE" }, importButton { "IMPORT PACK" }, exportButton { "EXPORT PACK" };
+    juce::TextButton wavesButton { "WAVES" }, randomButton { "RANDOM" };
+    WaveEditor waveEditor { processorRef };
+    static constexpr int waveBandHeight = 210;
     std::unique_ptr<juce::FileChooser> fileChooser;
 
     juce::String shownPath, shownName;

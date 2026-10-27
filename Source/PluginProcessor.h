@@ -8,6 +8,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include "Effects.h"
+#include "Waves.h"
 #include "Presets.h"
 
 //==============================================================================
@@ -25,6 +26,12 @@ struct SynthParams
     std::atomic<float> *aA, *aD, *aS, *aR;
     std::atomic<float> *lfoShape, *lfoDest, *lfoRate, *lfoDepth;
     std::atomic<float> *pitEnv, *pitDec;
+    std::atomic<float> *glide = nullptr, *fold = nullptr;
+
+    // Ondas editables y ultima nota (para el glide); los asigna el procesador
+    const Waves::Table* tableA = nullptr;
+    const Waves::Table* tableB = nullptr;
+    std::atomic<float>* lastNoteHz = nullptr;
 };
 
 //==============================================================================
@@ -61,7 +68,8 @@ private:
     };
 
     static float polyBlep (float t, float dt) noexcept;
-    static float oscSample (int wave, float phase, float dt, float pulseWidth) noexcept;
+    static float oscSample (int wave, float phase, float dt, float pulseWidth, const float* custom) noexcept;
+    static float wavefold (float x, float amount) noexcept;
     float lfoSample (int shape, float increment) noexcept;
     float filterProcess (Svf& s, float in, int type) const noexcept;
     void updateFilterCoefficients (float cutoffHz) noexcept;
@@ -76,6 +84,8 @@ private:
 
     double sampleRateHz  = 44100.0;
     float  baseFrequency = 440.0f;
+    float  currentFreq   = 440.0f;   // frecuencia con glide
+    std::array<float, Waves::tableSize + 1> customA {}, customB {};
     float  bendRatio     = 1.0f;
     float  velocityGain  = 0.0f;
 
@@ -99,6 +109,7 @@ struct LibraryPreset
 {
     juce::String name;
     juce::String category;                                  // puede estar vacia
+    juce::String waveA, waveB;                              // ondas dibujadas (vacio si no se usan)
     std::vector<std::pair<juce::String, float>> values;     // (idParametro, valor)
 };
 
@@ -159,6 +170,12 @@ public:
     bool saveCurrentSoundToUser (const juce::String& name, const juce::String& category);
     void removeLibrary (int libIndex);
 
+    // Ondas editables (Custom) y sonido aleatorio
+    Waves::Table& getWaveTable (int osc) { return osc == 0 ? waveTableA : waveTableB; }
+    juce::String encodeWave (int osc) const;
+    void decodeWave (int osc, const juce::String& text);
+    void randomizeSound();
+
     // Packs
     std::vector<LibraryPreset> collectLibrary (int libIndex) const;
     std::vector<LibraryPreset> collectFactory (int genre) const;   // genre = -1 -> todos
@@ -203,6 +220,10 @@ private:
     juce::String customPresetName; // nombre del preset de libreria (vacio si se usa uno de fabrica)
     juce::String customLibName;    // libreria a la que pertenece
     std::vector<PresetLibrary> libraries;
+
+    Waves::Table waveTableA, waveTableB;
+    std::atomic<float> lastNoteHz { 0.0f };
+    juce::Random rng;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (PerreoTrapSynthAudioProcessor)
 };

@@ -430,7 +430,7 @@ PerreoTrapSynthAudioProcessorEditor::PerreoTrapSynthAudioProcessorEditor (Perreo
     presetDisplay.onClick = [this] { showPresetMenu(); };
     addAndMakeVisible (presetDisplay);
 
-    for (auto* b : { &prevButton, &nextButton, &saveButton, &importButton, &exportButton })
+    for (auto* b : { &prevButton, &nextButton, &saveButton, &importButton, &exportButton, &wavesButton, &randomButton })
     {
         b->setColour (juce::TextButton::buttonOnColourId, cyan);
         addAndMakeVisible (*b);
@@ -442,6 +442,13 @@ PerreoTrapSynthAudioProcessorEditor::PerreoTrapSynthAudioProcessorEditor (Perreo
     importButton.onClick = [this] { importPack(); };
     exportButton.onClick = [this] { exportPackMenu(); };
 
+    wavesButton.setClickingTogglesState (true);
+    wavesButton.onClick  = [this] { setWaveEditorOpen (wavesButton.getToggleState()); };
+    randomButton.onClick = [this] { processorRef.randomizeSound(); syncBrowser(); };
+    addChildComponent (waveEditor);
+
+    wavesButton.setTooltip ("Abre el editor de ondas");
+    randomButton.setTooltip ("Genera un sonido aleatorio");
     prevButton.setTooltip ("Preset anterior");
     nextButton.setTooltip ("Preset siguiente");
 
@@ -506,6 +513,10 @@ PerreoTrapSynthAudioProcessorEditor::PerreoTrapSynthAudioProcessorEditor (Perreo
         addKnob (pe, "pitEnv", "AMOUNT", orange);
         addKnob (pe, "pitDec", "TIME",   orange);
 
+        auto& warp = addPanel ("WARP / GLIDE", orange, 2, "pliega la onda y desliza entre notas");
+        addKnob (warp, "fold",  "FOLD",  orange);
+        addKnob (warp, "glide", "GLIDE", orange);
+
         auto& mix = addPanel ("SUB / NOISE / PULSE", violet, 2, "grave extra, aire y ancho");
         addKnob (mix, "subLvl",   "SUB",   violet);
         addKnob (mix, "noiseLvl", "NOISE", violet);
@@ -538,7 +549,7 @@ PerreoTrapSynthAudioProcessorEditor::PerreoTrapSynthAudioProcessorEditor (Perreo
 
     syncBrowser();
 
-    setResizeLimits (900, 640, 1600, 1100);
+    setResizeLimits (900, 640, 1600, 1400);
     setResizable (true, true);
     setSize (1120, 780);
 
@@ -549,6 +560,291 @@ PerreoTrapSynthAudioProcessorEditor::~PerreoTrapSynthAudioProcessorEditor()
 {
     stopTimer();
     setLookAndFeel (nullptr);
+}
+
+//------------------------------------------------------------------------------
+// WaveEditor
+//------------------------------------------------------------------------------
+WaveEditor::WaveEditor (PerreoTrapSynthAudioProcessor& p) : proc (p)
+{
+    for (int i = 0; i < Waves::numWaves; ++i)
+        waveBox.addItem (Waves::waveName (i), i + 1);
+
+    addAndMakeVisible (waveBox);
+
+    for (auto* b : { &oscAButton, &oscBButton, &sineBtn, &sawBtn, &squareBtn, &triBtn,
+                     &smoothBtn, &invertBtn, &randomBtn, &mirrorBtn })
+        addAndMakeVisible (*b);
+
+    oscAButton.onClick = [this] { selectOsc (0); };
+    oscBButton.onClick = [this] { selectOsc (1); };
+
+    auto fill = [this] (std::function<float (float)> f)
+    {
+        applyTool ([f] (std::array<float, Waves::tableSize>& t)
+        {
+            for (int i = 0; i < Waves::tableSize; ++i)
+                t[(size_t) i] = f ((float) i / (float) Waves::tableSize);
+        });
+    };
+
+    sineBtn.onClick   = [fill] { fill ([] (float ph) { return std::sin (6.2831853f * ph); }); };
+    sawBtn.onClick    = [fill] { fill ([] (float ph) { return 2.0f * ph - 1.0f; }); };
+    squareBtn.onClick = [fill] { fill ([] (float ph) { return ph < 0.5f ? 1.0f : -1.0f; }); };
+    triBtn.onClick    = [fill] { fill ([] (float ph) { return 2.0f * std::abs (2.0f * ph - 1.0f) - 1.0f; }); };
+
+    smoothBtn.onClick = [this]
+    {
+        applyTool ([] (std::array<float, Waves::tableSize>& t)
+        {
+            auto copy = t;
+
+            for (int i = 0; i < Waves::tableSize; ++i)
+            {
+                const auto prev = copy[(size_t) ((i + Waves::tableSize - 1) % Waves::tableSize)];
+                const auto next = copy[(size_t) ((i + 1) % Waves::tableSize)];
+                t[(size_t) i] = 0.25f * prev + 0.5f * copy[(size_t) i] + 0.25f * next;
+            }
+        });
+    };
+
+    invertBtn.onClick = [this]
+    {
+        applyTool ([] (std::array<float, Waves::tableSize>& t) { for (auto& v : t) v = -v; });
+    };
+
+    mirrorBtn.onClick = [this]
+    {
+        applyTool ([] (std::array<float, Waves::tableSize>& t) { std::reverse (t.begin(), t.end()); });
+    };
+
+    randomBtn.onClick = [this]
+    {
+        applyTool ([] (std::array<float, Waves::tableSize>& t)
+        {
+            juce::Random rnd;
+            constexpr int nodes = 12;
+            std::array<float, nodes> pts {};
+
+            for (auto& v : pts)
+                v = rnd.nextFloat() * 2.0f - 1.0f;
+
+            for (int i = 0; i < Waves::tableSize; ++i)
+            {
+                const float pos = (float) i / (float) Waves::tableSize * (float) nodes;
+                const int a = (int) pos % nodes;
+                const int b = (a + 1) % nodes;
+                const float f = 0.5f - 0.5f * std::cos ((pos - std::floor (pos)) * juce::MathConstants<float>::pi);
+                t[(size_t) i] = pts[(size_t) a] + (pts[(size_t) b] - pts[(size_t) a]) * f;
+            }
+        });
+    };
+
+    selectOsc (0);
+    startTimerHz (15);
+}
+
+int WaveEditor::currentWave() const
+{
+    return juce::jlimit (0, Waves::numWaves - 1, (int) (proc.apvts.getRawParameterValue (waveParamId())->load() + 0.5f));
+}
+
+void WaveEditor::selectOsc (int newOsc)
+{
+    osc = newOsc;
+    const auto accent = osc == 0 ? magenta : cyan;
+
+    waveAttach.reset();
+    waveAttach = std::make_unique<juce::AudioProcessorValueTreeState::ComboBoxAttachment> (proc.apvts, waveParamId(), waveBox);
+
+    oscAButton.setColour (juce::TextButton::buttonColourId, osc == 0 ? magenta.withAlpha (0.8f) : panelDeep);
+    oscBButton.setColour (juce::TextButton::buttonColourId, osc == 1 ? cyan.withAlpha (0.8f) : panelDeep);
+    waveBox.setColour (juce::ComboBox::outlineColourId, accent);
+    repaint();
+}
+
+void WaveEditor::makeCustom()
+{
+    const int w = currentWave();
+
+    if (w == Waves::customIndex)
+        return;
+
+    const float pw = proc.apvts.getRawParameterValue ("pw")->load();
+    std::array<float, Waves::tableSize> t;
+
+    for (int i = 0; i < Waves::tableSize; ++i)
+        t[(size_t) i] = Waves::displaySample (w, (float) i / (float) Waves::tableSize, pw);
+
+    proc.getWaveTable (osc).store (t);
+
+    if (auto* prm = proc.apvts.getParameter (waveParamId()))
+    {
+        prm->beginChangeGesture();
+        prm->setValueNotifyingHost (prm->convertTo0to1 ((float) Waves::customIndex));
+        prm->endChangeGesture();
+    }
+}
+
+void WaveEditor::applyTool (std::function<void (std::array<float, Waves::tableSize>&)> fn)
+{
+    makeCustom();
+
+    std::array<float, Waves::tableSize> t;
+    proc.getWaveTable (osc).load (t);
+    fn (t);
+    proc.getWaveTable (osc).store (t);
+    repaint();
+}
+
+void WaveEditor::drawAt (juce::Point<int> pos)
+{
+    if (canvas.isEmpty())
+        return;
+
+    const float fx = juce::jlimit (0.0f, 0.9999f, (float) (pos.x - canvas.getX()) / (float) canvas.getWidth());
+    const int idx = (int) (fx * (float) Waves::tableSize);
+    const float val = juce::jlimit (-1.0f, 1.0f, 1.0f - 2.0f * (float) (pos.y - canvas.getY()) / (float) canvas.getHeight());
+
+    makeCustom();
+
+    std::array<float, Waves::tableSize> t;
+    proc.getWaveTable (osc).load (t);
+
+    if (lastIdx < 0 || lastIdx == idx)
+    {
+        t[(size_t) idx] = val;
+    }
+    else
+    {
+        const int lo = juce::jmin (lastIdx, idx);
+        const int hi = juce::jmax (lastIdx, idx);
+
+        for (int i = lo; i <= hi; ++i)
+        {
+            const float f = (float) (i - lastIdx) / (float) (idx - lastIdx);
+            t[(size_t) i] = lastVal + (val - lastVal) * f;
+        }
+    }
+
+    proc.getWaveTable (osc).store (t);
+    lastIdx = idx;
+    lastVal = val;
+    repaint();
+}
+
+void WaveEditor::mouseDown (const juce::MouseEvent& e)
+{
+    lastIdx = -1;
+
+    if (canvas.contains (e.getPosition()))
+        drawAt (e.getPosition());
+}
+
+void WaveEditor::mouseDrag (const juce::MouseEvent& e)
+{
+    if (e.mouseWasDraggedSinceMouseDown())
+        drawAt (e.getPosition());
+}
+
+void WaveEditor::resized()
+{
+    auto r = getLocalBounds().reduced (12, 10);
+
+    auto left = r.removeFromLeft (150);
+    auto row = left.removeFromTop (28);
+    oscAButton.setBounds (row.removeFromLeft (70));
+    oscBButton.setBounds (row.removeFromRight (70));
+    left.removeFromTop (8);
+    waveBox.setBounds (left.removeFromTop (28));
+
+    auto right = r.removeFromRight (190);
+    const int bw = (right.getWidth() - 6) / 2;
+    const int bh = juce::jmin (34, (right.getHeight() - 18) / 4);
+    juce::TextButton* tools[] = { &sineBtn, &sawBtn, &squareBtn, &triBtn, &smoothBtn, &invertBtn, &randomBtn, &mirrorBtn };
+
+    for (int i = 0; i < 8; ++i)
+        tools[i]->setBounds (right.getX() + (i % 2) * (bw + 6), right.getY() + (i / 2) * (bh + 6), bw, bh);
+
+    canvas = r.reduced (12, 0);
+}
+
+void WaveEditor::paint (juce::Graphics& g)
+{
+    const auto accent = osc == 0 ? magenta : cyan;
+
+    g.setColour (panel);
+    g.fillRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 10.0f);
+    g.setColour (accent.withAlpha (0.35f));
+    g.drawRoundedRectangle (getLocalBounds().toFloat().reduced (1.5f), 10.0f, 1.2f);
+
+    // Texto de ayuda (columna izquierda)
+    g.setFont (boldFont (12.5f));
+    g.setColour (juce::Colours::white);
+    g.drawText ("WAVE EDITOR", 12, 12 + 28 + 8 + 28 + 10, 150, 18, juce::Justification::centredLeft, false);
+    g.setFont (juce::Font (juce::FontOptions (11.0f)));
+    g.setColour (textDim);
+    g.drawFittedText ("Dibuja con el mouse sobre la onda. Al dibujar, la onda actual pasa a CUSTOM y se guarda con el proyecto y con tus presets.",
+                      juce::Rectangle<int> (12, 12 + 28 + 8 + 28 + 32, 150, 84), juce::Justification::topLeft, 6, 0.9f);
+
+    if (canvas.isEmpty())
+        return;
+
+    // Lienzo
+    const auto cf = canvas.toFloat();
+    g.setColour (panelDeep);
+    g.fillRoundedRectangle (cf, 6.0f);
+
+    g.setColour (juce::Colours::white.withAlpha (0.06f));
+    for (int q = 1; q < 4; ++q)
+        g.drawVerticalLine (canvas.getX() + canvas.getWidth() * q / 4, cf.getY(), cf.getBottom());
+
+    g.drawHorizontalLine (canvas.getY() + canvas.getHeight() / 4, cf.getX(), cf.getRight());
+    g.drawHorizontalLine (canvas.getY() + canvas.getHeight() * 3 / 4, cf.getX(), cf.getRight());
+    g.setColour (juce::Colours::white.withAlpha (0.18f));
+    g.drawHorizontalLine (canvas.getCentreY(), cf.getX(), cf.getRight());
+
+    // Onda
+    const int w = currentWave();
+    const float pw = proc.apvts.getRawParameterValue ("pw")->load();
+    std::array<float, Waves::tableSize> raw;
+    proc.getWaveTable (osc).load (raw);
+
+    juce::Path path;
+    const int steps = juce::jmax (2, canvas.getWidth());
+
+    for (int x = 0; x < steps; ++x)
+    {
+        const float ph = (float) x / (float) steps;
+        const float v = (w == Waves::customIndex) ? raw[(size_t) juce::jmin (Waves::tableSize - 1, (int) (ph * (float) Waves::tableSize))]
+                                                  : Waves::displaySample (w, ph, pw);
+        const float px = cf.getX() + (float) x;
+        const float py = cf.getY() + (1.0f - v) * 0.5f * cf.getHeight();
+
+        if (x == 0) path.startNewSubPath (px, py);
+        else        path.lineTo (px, py);
+    }
+
+    juce::Path fillPath (path);
+    fillPath.lineTo (cf.getRight(), (float) canvas.getCentreY());
+    fillPath.lineTo (cf.getX(), (float) canvas.getCentreY());
+    fillPath.closeSubPath();
+
+    g.saveState();
+    g.reduceClipRegion (canvas);
+    g.setColour (accent.withAlpha (0.14f));
+    g.fillPath (fillPath);
+    g.setColour (accent);
+    g.strokePath (path, juce::PathStrokeType (2.2f));
+    g.restoreState();
+
+    g.setColour (accent.withAlpha (0.5f));
+    g.drawRoundedRectangle (cf, 6.0f, 1.0f);
+
+    g.setFont (juce::Font (juce::FontOptions (11.0f)));
+    g.setColour (textDim);
+    g.drawText (juce::String (Waves::waveName (w)) + (w == Waves::customIndex ? "   |   dibujando" : "   |   click y arrastra para editar"),
+                canvas.reduced (8, 4), juce::Justification::topLeft, false);
 }
 
 //------------------------------------------------------------------------------
@@ -628,6 +924,13 @@ void PerreoTrapSynthAudioProcessorEditor::syncBrowser()
         name = customName;
     }
 
+    if (! fromLibrary && customName.isNotEmpty())
+    {
+        fromLibrary = true;
+        path = "SESSION";
+        name = customName;
+    }
+
     if (! fromLibrary)
     {
         using namespace PresetLayout;
@@ -642,6 +945,15 @@ void PerreoTrapSynthAudioProcessorEditor::syncBrowser()
         shownName = name;
         presetDisplay.setText (path, name);
     }
+}
+
+void PerreoTrapSynthAudioProcessorEditor::setWaveEditorOpen (bool open)
+{
+    if (waveEditor.isVisible() == open)
+        return;
+
+    waveEditor.setVisible (open);
+    setSize (getWidth(), getHeight() + (open ? waveBandHeight : -waveBandHeight));
 }
 
 void PerreoTrapSynthAudioProcessorEditor::timerCallback()
@@ -963,7 +1275,7 @@ void PerreoTrapSynthAudioProcessorEditor::paint (juce::Graphics& g)
 
     g.setFont (juce::Font (juce::FontOptions (11.5f)));
     g.setColour (textDim);
-    g.drawText (juce::String (PresetLayout::total) + " factory presets   |   click the preset name to browse   |   double-click a knob to reset it",
+    g.drawText (juce::String (PresetLayout::total) + " factory presets   |   click the preset name to browse   |   WAVES = draw your own waveforms",
                 getLocalBounds().withTrimmedRight (18).withHeight (44),
                 juce::Justification::centredRight, false);
 
@@ -993,7 +1305,11 @@ void PerreoTrapSynthAudioProcessorEditor::resized()
     row.removeFromRight (6);
     importButton.setBounds (row.removeFromRight (104));
     row.removeFromRight (6);
-    saveButton.setBounds (row.removeFromRight (64));
+    saveButton.setBounds (row.removeFromRight (60));
+    row.removeFromRight (14);
+    randomButton.setBounds (row.removeFromRight (70));
+    row.removeFromRight (6);
+    wavesButton.setBounds (row.removeFromRight (66));
     row.removeFromRight (14);
 
     prevButton.setBounds (row.removeFromLeft (36));
@@ -1006,6 +1322,12 @@ void PerreoTrapSynthAudioProcessorEditor::resized()
     // Filas de paneles
     //--------------------------------------------------------------------------
     area.removeFromTop (8);
+
+    if (waveEditor.isVisible())
+    {
+        waveEditor.setBounds (area.removeFromTop (waveBandHeight - 8));
+        area.removeFromTop (8);
+    }
 
     const int gap = 8;
     const int rowH = (area.getHeight() - gap * (numRows - 1)) / numRows;
